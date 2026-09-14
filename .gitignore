@@ -1,0 +1,57 @@
+# Dependencias
+/node_modules
+/vendor
+
+# Datos Sensibles y Configuración
+.env
+.env.mysql
+.phpunit.result.cache
+
+# Archivos temporales y scripts one-off
+/reset_users.php
+/deploy.sh
+/routes_academicus.json
+
+# Documentación interna (contiene secretos)
+/docs
+
+# Cache generado por artisan
+/bootstrap/cache/packages.php
+/bootstrap/cache/services.php
+
+# Artefactos de build anteriores
+/public/build_old
+
+# Subidas de usuarios (no deben ir al repo)
+/storage/app/backups/*
+/storage/app/public/topics/*
+/storage/app/public/avatars/*
+
+# Archivo de archive local
+/_archive/
+
+*.sqlite
+*.zip
+*.bak
+
+# Servidor y Publicación
+.htaccess
+/public/.htaccess
+robots.txt
+/public/robots.txt
+
+# Almacenamiento y Logs
+/storage/*.key
+/storage/logs/*
+/storage/framework/cache/data/*
+/storage/framework/views/*.php
+/storage/framework/sessions/*
+/public/storage
+
+# Compilación Frontend
+/public/build
+
+# IDEs
+.vscode
+.idea
+.DS_Store

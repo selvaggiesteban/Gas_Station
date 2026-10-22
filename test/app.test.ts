@@ -1,16 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { app } from '../src/index';
+import { SELF } from 'cloudflare:test';
+
+const BASE = 'https://gas-station.test';
 
 describe('app', () => {
-  it('GET / responde con estado ok', async () => {
-    const res = await app.request('/');
+  it('GET / muestra el landing público con la marca', async () => {
+    const res = await SELF.fetch(BASE + '/', { redirect: 'manual' });
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body).toMatchObject({ app: 'Gas Station', status: 'ok' });
+    const html = await res.text();
+    expect(html).toContain('Gas Station');
+    expect(html).toContain('Creá tu cuenta');
+    expect(html).toContain('lang="es-AR"');
   });
 
-  it('GET desconocido responde 404', async () => {
-    const res = await app.request('/no-existe');
+  it('ruta desconocida responde 404', async () => {
+    const res = await SELF.fetch(BASE + '/no-existe');
     expect(res.status).toBe(404);
   });
 });

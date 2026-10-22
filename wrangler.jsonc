@@ -23,5 +23,9 @@
   ],
   "triggers": {
     "crons": ["*/5 * * * *"]
+  },
+  "vars": {
+    "BRAND_NAME": "Gas Station",
+    "PBKDF2_ITERATIONS": "30000"
   }
 }

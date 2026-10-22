@@ -6,6 +6,7 @@ import type { AppEnv } from './env';
 import { attachUser, brandOf } from './middleware/auth';
 import { authRoutes } from './routes/auth';
 import { appRoutes } from './routes/app';
+import { shopRoutes } from './routes/shop';
 import { adminRoutes } from './routes/admin';
 import { page, escapeHtml } from './lib/html';
 import {
@@ -79,6 +80,7 @@ app.get('/__cpu', async (c) => {
 
 app.route('/', authRoutes);
 app.route('/', appRoutes);
+app.route('/', shopRoutes);
 app.route('/', adminRoutes);
 
 app.notFound((c) => c.json({ error: 'no encontrado' }, 404));

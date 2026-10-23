@@ -213,4 +213,16 @@ describe('panel de usuario', () => {
     ).first<{ name: string }>();
     expect(check?.name).toBe('Pedro Perfil');
   });
+
+  it('/app muestra el link a Ranking y no menciona batallas', async () => {
+    const reg = await register('Rita Ranking', 'rita.panel@test.com');
+    const cookie = sessionCookie(reg);
+    const res = await get('/app', cookie);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('href="/ranking"');
+    expect(html).toContain('Ranking');
+    expect(html).not.toMatch(/batalla/i);
+    expect(html).not.toMatch(/battle/i);
+  });
 });

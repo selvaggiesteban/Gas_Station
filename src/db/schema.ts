@@ -4,6 +4,7 @@ import {
   index,
   integer,
   primaryKey,
+  real,
   sqliteTable,
   text,
   uniqueIndex,
@@ -39,17 +40,8 @@ export const PAYMENT_METHOD_VALUES = [
   'mercadopago',
 ] as const;
 
-export const BATTLE_STATUS_VALUES = [
-  'pending',
-  'active',
-  'declined',
-  'completed',
-  'cancelled',
-] as const;
-
 export const GOAL_TYPE_VALUES = [
   'points',
-  'battles_won',
   'login_days',
   'sales_amount',
 ] as const;
@@ -63,7 +55,6 @@ export const ANNOUNCEMENT_AUDIENCE_VALUES = [
 ] as const;
 
 export const POINT_REASON_VALUES = [
-  'battle_win',
   'challenge',
   'login',
   'order',
@@ -305,51 +296,6 @@ export const orderItems = sqliteTable(
   }),
 );
 
-export const battles = sqliteTable(
-  'battles',
-  {
-    id: integer('id').primaryKey({ autoIncrement: true }),
-    challengerId: integer('challenger_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    opponentId: integer('opponent_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    challengerStoreId: integer('challenger_store_id')
-      .notNull()
-      .references(() => stores.id),
-    opponentStoreId: integer('opponent_store_id')
-      .notNull()
-      .references(() => stores.id),
-    metric: text('metric').notNull().default('sales'),
-    windowStart: integer('window_start', { mode: 'timestamp_ms' }).notNull(),
-    windowEnd: integer('window_end', { mode: 'timestamp_ms' }).notNull(),
-    status: text('status', { enum: BATTLE_STATUS_VALUES })
-      .notNull()
-      .default('pending'),
-    challengerScore: integer('challenger_score').notNull().default(0),
-    opponentScore: integer('opponent_score').notNull().default(0),
-    winnerId: integer('winner_id').references(() => users.id, {
-      onDelete: 'set null',
-    }),
-    createdAt: createdAt(),
-    completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
-  },
-  (t) => ({
-    closeIdx: index('battles_close_idx').on(t.status, t.windowEnd),
-    challengerIdx: index('battles_challenger_idx').on(t.challengerId),
-    opponentIdx: index('battles_opponent_idx').on(t.opponentId),
-    windowChk: check(
-      'battles_window_chk',
-      sql`window_end > window_start`,
-    ),
-    statusChk: check(
-      'battles_status_chk',
-      sql`status in ('pending','active','declined','completed','cancelled')`,
-    ),
-  }),
-);
-
 export const weeklyChallenges = sqliteTable(
   'weekly_challenges',
   {
@@ -499,5 +445,270 @@ export const userActivity = sqliteTable(
       t.type,
       t.createdAt,
     ),
+  }),
+);
+
+export const SHIFT_VALUES = ['morning', 'evening', 'night'] as const;
+
+export const CASH_STATUS_VALUES = ['open', 'closed'] as const;
+
+export const FUEL_PRODUCT_VALUES = ['nafta', 'gasoil', 'diesel', 'gnc'] as const;
+
+export const cashDays = sqliteTable(
+  'cash_days',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    storeId: integer('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'cascade' }),
+    reportDate: integer('report_date', { mode: 'timestamp_ms' }).notNull(),
+    openingCents: integer('opening_cents').notNull().default(0),
+    closingDeclaredCents: integer('closing_declared_cents'),
+    closingCountedCents: integer('closing_counted_cents'),
+    differenceCents: integer('difference_cents'),
+    notes: text('notes'),
+    status: text('status', { enum: CASH_STATUS_VALUES })
+      .notNull()
+      .default('open'),
+    openedBy: integer('opened_by').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    closedBy: integer('closed_by').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    closedAt: integer('closed_at', { mode: 'timestamp_ms' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => ({
+    storeDateUq: uniqueIndex('cash_days_store_date_uq').on(
+      t.storeId,
+      t.reportDate,
+    ),
+    storeIdx: index('cash_days_store_idx').on(t.storeId, t.reportDate),
+    statusChk: check(
+      'cash_days_status_chk',
+      sql`status in ('open','closed')`,
+    ),
+    openingChk: check('cash_days_opening_chk', sql`opening_cents >= 0`),
+  }),
+);
+
+export const salesSummaries = sqliteTable(
+  'sales_summaries',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    storeId: integer('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'cascade' }),
+    reportDate: integer('report_date', { mode: 'timestamp_ms' }).notNull(),
+    shift: text('shift', { enum: SHIFT_VALUES }).notNull(),
+    cashCents: integer('cash_cents').notNull().default(0),
+    cardCents: integer('card_cents').notNull().default(0),
+    transferCents: integer('transfer_cents').notNull().default(0),
+    creditCents: integer('credit_cents').notNull().default(0),
+    totalCents: integer('total_cents').notNull().default(0),
+    notes: text('notes'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => ({
+    storeDateShiftUq: uniqueIndex('sales_summaries_store_date_shift_uq').on(
+      t.storeId,
+      t.reportDate,
+      t.shift,
+    ),
+    storeIdx: index('sales_summaries_store_idx').on(t.storeId, t.reportDate),
+    shiftChk: check(
+      'sales_summaries_shift_chk',
+      sql`shift in ('morning','evening','night')`,
+    ),
+    amountsChk: check(
+      'sales_summaries_amounts_chk',
+      sql`cash_cents >= 0 and card_cents >= 0 and transfer_cents >= 0 and credit_cents >= 0 and total_cents >= 0`,
+    ),
+  }),
+);
+
+export const dailyActivities = sqliteTable(
+  'daily_activities',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    storeId: integer('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'cascade' }),
+    reportDate: integer('report_date', { mode: 'timestamp_ms' }).notNull(),
+    shift: text('shift', { enum: SHIFT_VALUES }).notNull(),
+    gncOpening: integer('gnc_opening').notNull().default(0),
+    gncClosing: integer('gnc_closing').notNull().default(0),
+    gncVolume: integer('gnc_volume').notNull().default(0),
+    gncSalesCents: integer('gnc_sales_cents').notNull().default(0),
+    pumpCheck: integer('pump_check', { mode: 'boolean' }).notNull().default(false),
+    notes: text('notes'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => ({
+    storeDateShiftUq: uniqueIndex('daily_activities_store_date_shift_uq').on(
+      t.storeId,
+      t.reportDate,
+      t.shift,
+    ),
+    storeIdx: index('daily_activities_store_idx').on(t.storeId, t.reportDate),
+    shiftChk: check(
+      'daily_activities_shift_chk',
+      sql`shift in ('morning','evening','night')`,
+    ),
+    gncChk: check(
+      'daily_activities_gnc_chk',
+      sql`gnc_opening >= 0 and gnc_closing >= 0 and gnc_volume >= 0 and gnc_sales_cents >= 0`,
+    ),
+  }),
+);
+
+export const lubricantStocks = sqliteTable(
+  'lubricant_stocks',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    storeId: integer('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'cascade' }),
+    reportDate: integer('report_date', { mode: 'timestamp_ms' }).notNull(),
+    productId: integer('product_id').references(() => products.id, {
+      onDelete: 'set null',
+    }),
+    brand: text('brand').notNull(),
+    grade: text('grade').notNull(),
+    containerL: real('container_l').notNull(),
+    openingQty: integer('opening_qty').notNull().default(0),
+    entriesQty: integer('entries_qty').notNull().default(0),
+    exitsQty: integer('exits_qty').notNull().default(0),
+    closingQty: integer('closing_qty').notNull().default(0),
+    unitPriceCents: integer('unit_price_cents').notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => ({
+    storeIdx: index('lubricant_stocks_store_idx').on(t.storeId, t.reportDate),
+    containerChk: check('lubricant_stocks_container_chk', sql`container_l > 0`),
+    qtyChk: check(
+      'lubricant_stocks_qty_chk',
+      sql`opening_qty >= 0 and entries_qty >= 0 and exits_qty >= 0 and closing_qty >= 0`,
+    ),
+    priceChk: check(
+      'lubricant_stocks_price_chk',
+      sql`unit_price_cents >= 0`,
+    ),
+  }),
+);
+
+export const shiftReports = sqliteTable(
+  'shift_reports',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    storeId: integer('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'cascade' }),
+    reportDate: integer('report_date', { mode: 'timestamp_ms' }).notNull(),
+    shift: text('shift', { enum: SHIFT_VALUES }).notNull(),
+    shiftStart: integer('shift_start', { mode: 'timestamp_ms' }).notNull(),
+    shiftEnd: integer('shift_end', { mode: 'timestamp_ms' }).notNull(),
+    cashierId: integer('cashier_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    openingCents: integer('opening_cents').notNull().default(0),
+    closingCents: integer('closing_cents').notNull().default(0),
+    notes: text('notes'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => ({
+    storeDateShiftUq: uniqueIndex('shift_reports_store_date_shift_uq').on(
+      t.storeId,
+      t.reportDate,
+      t.shift,
+    ),
+    storeIdx: index('shift_reports_store_idx').on(t.storeId, t.reportDate),
+    cashierIdx: index('shift_reports_cashier_idx').on(t.cashierId),
+    shiftChk: check(
+      'shift_reports_shift_chk',
+      sql`shift in ('morning','evening','night')`,
+    ),
+    windowChk: check('shift_reports_window_chk', sql`shift_end > shift_start`),
+    cashChk: check(
+      'shift_reports_cash_chk',
+      sql`opening_cents >= 0 and closing_cents >= 0`,
+    ),
+  }),
+);
+
+export const shiftReportReadings = sqliteTable(
+  'shift_report_readings',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    reportId: integer('report_id')
+      .notNull()
+      .references(() => shiftReports.id, { onDelete: 'cascade' }),
+    surtidor: integer('surtidor').notNull(),
+    nozzle: integer('nozzle').notNull(),
+    product: text('product', { enum: FUEL_PRODUCT_VALUES }).notNull(),
+    openingReading: real('opening_reading').notNull().default(0),
+    closingReading: real('closing_reading').notNull().default(0),
+    volume: real('volume').notNull().default(0),
+    priceCents: integer('price_cents').notNull().default(0),
+    totalCents: integer('total_cents').notNull().default(0),
+  },
+  (t) => ({
+    reportIdx: index('shift_report_readings_report_idx').on(t.reportId),
+    nozzleUq: uniqueIndex('shift_report_readings_nozzle_uq').on(
+      t.reportId,
+      t.surtidor,
+      t.nozzle,
+    ),
+    surtidorChk: check(
+      'shift_report_readings_surtidor_chk',
+      sql`surtidor between 1 and 6`,
+    ),
+    nozzleChk: check(
+      'shift_report_readings_nozzle_chk',
+      sql`nozzle between 1 and 6`,
+    ),
+    productChk: check(
+      'shift_report_readings_product_chk',
+      sql`product in ('nafta','gasoil','diesel','gnc')`,
+    ),
+    readingChk: check(
+      'shift_report_readings_reading_chk',
+      sql`opening_reading >= 0 and closing_reading >= 0 and volume >= 0`,
+    ),
+    totalChk: check(
+      'shift_report_readings_total_chk',
+      sql`price_cents >= 0 and total_cents >= 0`,
+    ),
+  }),
+);
+
+export const raffleCoupons = sqliteTable(
+  'raffle_coupons',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    code: text('code').notNull().unique(),
+    storeId: integer('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'cascade' }),
+    holderName: text('holder_name').notNull(),
+    holderEmail: text('holder_email'),
+    holderPhone: text('holder_phone'),
+    issuedAt: integer('issued_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    drawnAt: integer('drawn_at', { mode: 'timestamp_ms' }),
+    winning: integer('winning', { mode: 'boolean' }).notNull().default(false),
+    notes: text('notes'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => ({
+    storeIdx: index('raffle_coupons_store_idx').on(t.storeId, t.issuedAt),
   }),
 );

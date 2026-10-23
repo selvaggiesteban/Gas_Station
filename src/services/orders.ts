@@ -4,6 +4,7 @@ import {
   coupons,
   orderItems,
   orders,
+  pointLogs,
   products,
   storeUser,
   stores,
@@ -231,4 +232,158 @@ export async function incrementCouponUses(
 export function sanitizeFilename(name: string): string {
   const cleaned = name.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '');
   return cleaned || 'comprobante';
+}
+
+export const ORDER_POINTS_DIVISOR = 1000;
+
+export function orderPointsFor(totalCents: number): number {
+  return Math.max(0, Math.floor(totalCents / ORDER_POINTS_DIVISOR));
+}
+
+export async function hasOrderPoints(
+  db: Db,
+  orderId: number,
+): Promise<boolean> {
+  const rows = await db
+    .select({ id: pointLogs.id })
+    .from(pointLogs)
+    .where(
+      and(
+        eq(pointLogs.reason, 'order'),
+        eq(pointLogs.referenceType, 'order'),
+        eq(pointLogs.referenceId, orderId),
+      ),
+    )
+    .limit(1);
+  return Boolean(rows[0]);
+}
+
+export async function awardOrderPoints(
+  db: Db,
+  order: OrderRow,
+): Promise<number> {
+  const points = orderPointsFor(order.totalCents);
+  if (points <= 0) return 0;
+  if (await hasOrderPoints(db, order.id)) return 0;
+  const clienteRows = await db
+    .select({ id: users.id, active: users.active })
+    .from(users)
+    .where(eq(users.id, order.userId))
+    .limit(1);
+  let targetId: number | null = null;
+  if (clienteRows[0]?.active) {
+    targetId = clienteRows[0].id;
+  } else if (order.gestorId !== null) {
+    const gestorRows = await db
+      .select({ id: users.id, active: users.active })
+      .from(users)
+      .where(eq(users.id, order.gestorId))
+      .limit(1);
+    if (gestorRows[0]?.active) targetId = gestorRows[0].id;
+  }
+  if (targetId === null) return 0;
+  await db
+    .update(users)
+    .set({ points: sql`${users.points} + ${points}` })
+    .where(eq(users.id, targetId));
+  await db.insert(pointLogs).values({
+    userId: targetId,
+    points,
+    reason: 'order',
+    referenceType: 'order',
+    referenceId: order.id,
+  });
+  return points;
+}
+
+export type ApproveOrderResult =
+  | { ok: true; alreadyPaid: boolean; awardedPoints: number }
+  | { ok: false; error: string };
+
+export async function approveOrder(
+  db: Db,
+  order: OrderRow,
+  adminId: number,
+): Promise<ApproveOrderResult> {
+  if (order.status === 'paid') {
+    return { ok: true, alreadyPaid: true, awardedPoints: 0 };
+  }
+  if (order.status !== 'pending') {
+    return { ok: false, error: 'Solo se pueden aprobar órdenes pendientes.' };
+  }
+  const now = new Date();
+  const updated = await db
+    .update(orders)
+    .set({
+      status: 'paid',
+      paidAt: now,
+      approvedAt: now,
+      approvedBy: adminId,
+      updatedAt: now,
+    })
+    .where(and(eq(orders.id, order.id), eq(orders.status, 'pending')))
+    .returning({ id: orders.id });
+  if (!updated[0]) {
+    return { ok: true, alreadyPaid: true, awardedPoints: 0 };
+  }
+  const awardedPoints = await awardOrderPoints(db, order);
+  return { ok: true, alreadyPaid: false, awardedPoints };
+}
+
+export async function restoreStockForOrder(
+  db: Db,
+  orderId: number,
+): Promise<void> {
+  const items = await db
+    .select()
+    .from(orderItems)
+    .where(eq(orderItems.orderId, orderId));
+  for (const item of items) {
+    if (item.productId === null) continue;
+    await db.run(
+      sql`update products set stock = stock + ${item.qty} where id = ${item.productId}`,
+    );
+  }
+}
+
+export type RejectOrderResult =
+  | { ok: true; alreadyRejected: boolean }
+  | { ok: false; error: string };
+
+export async function rejectOrder(
+  db: Db,
+  order: OrderRow,
+  motivo: string,
+): Promise<RejectOrderResult> {
+  if (order.status === 'cancelled') {
+    return { ok: true, alreadyRejected: true };
+  }
+  if (order.status !== 'pending') {
+    return { ok: false, error: 'Solo se pueden rechazar órdenes pendientes.' };
+  }
+  const updated = await db
+    .update(orders)
+    .set({ status: 'cancelled', notes: motivo, updatedAt: new Date() })
+    .where(and(eq(orders.id, order.id), eq(orders.status, 'pending')))
+    .returning({ id: orders.id });
+  if (!updated[0]) {
+    return { ok: true, alreadyRejected: true };
+  }
+  await restoreStockForOrder(db, order.id);
+  return { ok: true, alreadyRejected: false };
+}
+
+const MIME_BY_EXT: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  pdf: 'application/pdf',
+};
+
+export function mimeFromKey(key: string): string {
+  const ext = key.split('.').pop()?.toLowerCase() ?? '';
+  return MIME_BY_EXT[ext] ?? 'application/octet-stream';
 }

@@ -82,3 +82,40 @@ Resumen de las 20 tablas:
 - **D1** `gas-station-db` (id `77eb09cf-d0c0-495b-af8a-c7e0107398ea`); **R2** `gas-station-assets`.
 - **Worker** `gas-station`, URL: https://gas-station.selvaggi-esteban.workers.dev.
 - **Repo**: github.com/selvaggiesteban/Gas_Station (rama `main` = código nuevo; `legacy/laravel` = baseline Laravel).
+
+
+---
+
+## 10. Actualización de alcance (post-F1b/F2/F5)
+
+Decisiones nuevas que reemplazan lo definido arriba:
+
+1. **D10 / F3 — batallas 1:1 ELIMINADAS.** No existe el feature de batallas
+   entre gestores. La gamificacación se mantiene y el **ranking / competencia
+   única es la cantidad de puntos acumulados**.
+   - Eliminado: tabla `battles` (migración `0001_remove_battles.sql`),
+     `BATTLE_STATUS_VALUES`, el valor `battles_won` de `GOAL_TYPE_VALUES`, el
+     valor `battle_win` de `POINT_REASON_VALUES`, el progreso de desafíos
+     vinculado a batallas y los labels en admin/panel.
+   - D13 pasa a: batallas no existen para ningún rol. D14: puntos =
+     desafíos + login diario + órdenes + ajustes admin.
+   - Los CHECK de la base se mantienen como superconjunto (recrear tablas en
+     SQLite con foreign_keys activas borraría filas hijas en cascada); la app
+     ya no escribe esos valores.
+   - Nuevo F3': **ranking de puntos** (`/ranking`), stub ya montado.
+2. **Operativa (Atomic Design, nuevos módulos).** Del desglose de los 6
+   formularios en papel de la gasolinera derivan: Caja diaria, Resumen de
+   ventas / Ensobrado, Resumen diario de actividades (matriz GNC por turnos),
+   Stock de lubricantes, Rendición de turno (surtidores 1-6) y Cupón de
+   sorteo. Stub ya montado en `/operativa`.
+3. **F7**: los endpoints de diagnóstico (`/__bench`, `/__time`, `/__cpu`)
+   **ya fueron eliminados** en `src/index.ts`.
+4. **Pendientes del usuario actualizados**:
+   - ✅ Repo: se queda **público** (decisión del usuario, no hacer nada).
+   - ✅ PAT: se usa tal cual, **no rotar**.
+   - ❌ Default branch → `main`: la PAT no tiene scope `Administration: write`
+     (GitHub responde "Resource not accessible"). Requiere acción manual del
+     usuario en la UI o ampliar el scope de la PAT.
+   - ⏳ Reconectar MCP Cloudflare con `workers-ci.write` (Workers Builds).
+   - ✅ Usuario admin de producción creado: `admin@gas-station.test`.
+   - ⏳ Gmail real (F4) con las credenciales provistas.

@@ -1,0 +1,152 @@
+---
+import Layout from '../layouts/Layout.astro';
+import FeatureCard from '../components/FeatureCard.astro';
+
+const registroUrl = 'https://gas-station.selvaggi-esteban.workers.dev/registro';
+
+const features = [
+  {
+    icon: 'store',
+    title: 'Catálogo y tienda online',
+    description:
+      'Publicá tus productos y servicios con tu propia tienda online. Tus clientes compran desde el celular y vos gestionás todo desde un panel.',
+  },
+  {
+    icon: 'brand',
+    title: 'Marca blanca',
+    description:
+      'Tu nombre, tu identidad. Cada estación opera con su propia marca, sin rastros de terceros en la experiencia del cliente.',
+  },
+  {
+    icon: 'points',
+    title: 'Puntos y recompensas',
+    description:
+      'Sumá puntos por compras y visitas. Canjealos por productos o descuentos y fidelizá a tus clientes.',
+  },
+  {
+    icon: 'rank',
+    title: 'Desafíos y ranking',
+    description:
+      'Desafíos semanales y rankings que hacen volver a tus clientes una y otra vez, en modo juego.',
+  },
+  {
+    icon: 'shield',
+    title: 'Roles y permisos',
+    description:
+      'Administradores, gestores de tienda y empleados: cada uno con su acceso y sus tareas, sin mezclar nada.',
+  },
+  {
+    icon: 'mail',
+    title: 'Avisos por email',
+    description:
+      'Bienvenidas, confirmaciones de pedido y notificaciones automáticas, listas para mandar desde la plataforma.',
+  },
+] as const;
+
+const beneficios = [
+  'Sin instalación: funciona desde cualquier navegador, incluso el celular.',
+  'Panel de administración con usuarios, tiendas, pedidos y métricas.',
+  'Pedidos con carrito, estados y seguimiento en tiempo real.',
+  'Puntos y desafíos configurables para cada estación.',
+  'Soporte por email en español.',
+  'Precios en pesos, sin permanencia mínima.',
+];
+---
+
+<Layout
+  title="Gas Station — Sistema de gestión para estaciones de servicio"
+  description="Plataforma white-label para gasolineras: catálogo propio, tienda online, puntos de fidelización, desafíos y ranking. Creá tu cuenta y empezá hoy."
+  current="inicio"
+>
+  <section class="bg-zinc-950 text-white">
+    <div class="mx-auto w-full max-w-6xl px-4 py-24 sm:px-6 lg:py-32">
+      <p class="text-sm font-semibold uppercase tracking-widest text-zinc-400">
+        Plataforma white-label para estaciones de servicio
+      </p>
+      <h1 class="mt-4 max-w-3xl text-4xl font-extrabold leading-tight tracking-tight sm:text-5xl lg:text-6xl">
+        Tu gasolinera, con marca propia y sistema propio
+      </h1>
+      <p class="mt-6 max-w-2xl text-lg leading-relaxed text-zinc-300">
+        Gas Station es el sistema de gestión para estaciones de servicio: catálogo
+        propio, tienda online, puntos de fidelización, desafíos y ranking. Tus
+        clientes vuelven y tu marca crece.
+      </p>
+      <div class="mt-10 flex flex-wrap gap-4">
+        <a
+          href={registroUrl}
+          class="rounded-lg bg-white px-6 py-3 text-sm font-semibold text-zinc-900 transition-colors hover:bg-zinc-200"
+        >
+          Creá tu cuenta
+        </a>
+        <a
+          href="/precios/"
+          class="rounded-lg border border-zinc-600 px-6 py-3 text-sm font-semibold text-white transition-colors hover:border-white hover:bg-white hover:text-zinc-900"
+        >
+          Ver precios
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="bg-white" aria-labelledby="incluye">
+    <div class="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6">
+      <h2 id="incluye" class="text-3xl font-bold tracking-tight text-zinc-900">
+        Qué incluye
+      </h2>
+      <p class="mt-3 max-w-2xl text-zinc-600">
+        Una plataforma completa para administrar tu estación y fidelizar a tus
+        clientes, sin instalar nada.
+      </p>
+      <div class="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        {features.map((feature) => <FeatureCard {...feature} />)}
+      </div>
+    </div>
+  </section>
+
+  <section class="border-t border-zinc-200 bg-zinc-50" aria-labelledby="por-que">
+    <div class="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6">
+      <h2 id="por-que" class="text-3xl font-bold tracking-tight text-zinc-900">
+        Todo pensado para el día a día de la estación
+      </h2>
+      <ul class="mt-8 grid gap-4 sm:grid-cols-2">
+        {
+          beneficios.map((beneficio) => (
+            <li class="flex items-start gap-3 rounded-xl border border-zinc-200 bg-white p-5">
+              <svg
+                aria-hidden="true"
+                class="mt-0.5 h-5 w-5 shrink-0 text-zinc-900"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+              </svg>
+              <span class="text-sm leading-relaxed text-zinc-700">{beneficio}</span>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </section>
+
+  <section class="bg-zinc-950" aria-labelledby="cta-final">
+    <div class="mx-auto flex w-full max-w-6xl flex-col items-start gap-6 px-4 py-20 sm:px-6 md:flex-row md:items-center md:justify-between">
+      <div>
+        <h2 id="cta-final" class="text-3xl font-bold tracking-tight text-white">
+          ¿Empezamos?
+        </h2>
+        <p class="mt-2 max-w-xl text-zinc-300">
+          Creá tu cuenta en minutos y probá la plataforma con tu estación. Sin
+          tarjeta y sin permanencia mínima.
+        </p>
+      </div>
+      <a
+        href={registroUrl}
+        class="shrink-0 rounded-lg bg-white px-6 py-3 text-sm font-semibold text-zinc-900 transition-colors hover:bg-zinc-200"
+      >
+        Creá tu cuenta
+      </a>
+    </div>
+  </section>
+</Layout>

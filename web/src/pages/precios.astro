@@ -1,0 +1,81 @@
+---
+import Layout from '../layouts/Layout.astro';
+import PlanCard from '../components/PlanCard.astro';
+
+const planes = [
+  {
+    name: 'Básico',
+    price: 19999,
+    description: 'Para una estación que está arrancando.',
+    features: [
+      '1 estación de servicio',
+      'Catálogo y tienda online',
+      'Puntos de fidelización',
+      'Hasta 3 usuarios',
+      'Soporte por email',
+    ],
+    highlighted: false,
+  },
+  {
+    name: 'Profesional',
+    price: 39999,
+    description: 'Para estaciones que ya tienen movimiento.',
+    features: [
+      'Todo lo del plan Básico',
+      'Tiendas y gestores',
+      'Desafíos y ranking',
+      'Emails automáticos',
+      'Usuarios ilimitados',
+      'Reportes y métricas',
+    ],
+    highlighted: true,
+  },
+  {
+    name: 'Todo incluido',
+    price: 79999,
+    description: 'Para redes y marcas que quieren escalar.',
+    features: [
+      'Todo lo del plan Profesional',
+      'Marca blanca completa',
+      'Dominio propio',
+      'Integraciones y API',
+      'Soporte prioritario',
+      'Acompañamiento inicial',
+    ],
+    highlighted: false,
+  },
+] as const;
+---
+
+<Layout
+  title="Precios — Gas Station"
+  description="Planes mensuales de Gas Station en pesos argentinos: Básico, Profesional y Todo incluido. Sin permanencia mínima. Empezá hoy."
+  current="precios"
+>
+  <section class="bg-zinc-950" aria-labelledby="precios">
+    <div class="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6">
+      <h1 id="precios" class="text-4xl font-extrabold tracking-tight text-white sm:text-5xl">
+        Precios
+      </h1>
+      <p class="mt-4 max-w-2xl text-lg text-zinc-300">
+        Planes mensuales en pesos. Sin permanencia mínima: cancelás cuando
+        querés, sin preguntas.
+      </p>
+    </div>
+  </section>
+
+  <section class="bg-zinc-50" aria-label="Planes disponibles">
+    <div class="mx-auto w-full max-w-6xl px-4 py-16 sm:px-6">
+      <div class="grid gap-8 lg:grid-cols-3">
+        {planes.map((plan) => <PlanCard {...plan} />)}
+      </div>
+      <p class="mt-12 text-center text-sm text-zinc-600">
+        ¿Necesitás algo a medida o una red con varias estaciones?
+        <a class="font-semibold text-zinc-900 underline underline-offset-2" href="/contacto/">
+          Escribinos
+        </a>
+        y armamos un plan juntos.
+      </p>
+    </div>
+  </section>
+</Layout>

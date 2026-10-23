@@ -120,6 +120,25 @@ describe('auth', () => {
     sessionCookie(login);
   });
 
+  it('/registro es público y monocromo', async () => {
+    const res = await get('/registro');
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Creá tu cuenta');
+    expect(html).toContain('class="public"');
+    expect(html).not.toContain('#eb7716');
+  });
+
+  it('las páginas autenticadas conservan el naranja de marca', async () => {
+    const reg = await register('Naranja Prueba', 'naranja@test.com');
+    const cookie = sessionCookie(reg);
+    const app = await get('/app', cookie);
+    expect(app.status).toBe(200);
+    const html = await app.text();
+    expect(html).not.toContain('class="public"');
+    expect(html).toContain('#eb7716');
+  });
+
   it('/admin exige rol admin', async () => {
     const reg = await register('Solo Cliente', 'cliente@test.com');
     const cookie = sessionCookie(reg);

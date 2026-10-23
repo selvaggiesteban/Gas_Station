@@ -1,0 +1,76 @@
+---
+interface Props {
+  name: string;
+  price: number;
+  description: string;
+  features: string[];
+  highlighted?: boolean;
+}
+
+const { name, price, description, features, highlighted = false } = Astro.props;
+
+const formatted = new Intl.NumberFormat('es-AR', {
+  style: 'currency',
+  currency: 'ARS',
+  maximumFractionDigits: 0,
+}).format(price);
+
+const registroUrl = 'https://gas-station.selvaggi-esteban.workers.dev/registro';
+---
+
+<article
+  class:list={[
+    'relative flex flex-col rounded-2xl p-8',
+    highlighted
+      ? 'border-2 border-zinc-900 bg-zinc-950 text-white shadow-xl'
+      : 'border border-zinc-200 bg-white text-zinc-900 shadow-sm',
+  ]}
+>
+  {
+    highlighted && (
+      <span class="absolute -top-3.5 left-1/2 -translate-x-1/2 rounded-full bg-white px-3 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-900 ring-2 ring-zinc-900">
+        Más elegido
+      </span>
+    )
+  }
+  <h2 class:list={['text-lg font-bold', highlighted ? 'text-white' : 'text-zinc-900']}>{name}</h2>
+  <p class:list={['mt-1 text-sm', highlighted ? 'text-zinc-400' : 'text-zinc-600']}>{description}</p>
+  <p class="mt-6 flex items-baseline gap-1.5">
+    <span class:list={['text-4xl font-extrabold tracking-tight', highlighted ? 'text-white' : 'text-zinc-900']}>
+      {formatted}
+    </span>
+    <span class:list={['text-sm font-medium', highlighted ? 'text-zinc-400' : 'text-zinc-600']}>/mes</span>
+  </p>
+  <ul class="mt-6 flex-1 space-y-3">
+    {
+      features.map((feature) => (
+        <li class="flex items-start gap-2.5">
+          <svg
+            aria-hidden="true"
+            class:list={['mt-0.5 h-4 w-4 shrink-0', highlighted ? 'text-white' : 'text-zinc-900']}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+          </svg>
+          <span class:list={['text-sm leading-relaxed', highlighted ? 'text-zinc-300' : 'text-zinc-700']}>
+            {feature}
+          </span>
+        </li>
+      ))
+    }
+  </ul>
+  <a
+    href={registroUrl}
+    class:list={[
+      'mt-8 inline-block rounded-lg px-5 py-3 text-center text-sm font-semibold transition-colors',
+      highlighted
+        ? 'bg-white text-zinc-900 hover:bg-zinc-200'
+        : 'bg-zinc-900 text-white hover:bg-zinc-700',
+    ]}
+  >
+    Empezar
+  </a>
+</article>

@@ -36,7 +36,6 @@ const DATE_FMT = new Intl.DateTimeFormat('es-AR', {
 });
 
 const POINT_REASON_LABELS: Record<string, string> = {
-  battle_win: 'Batalla ganada',
   challenge: 'Desafío completado',
   login: 'Inicio de sesión',
   order: 'Compra',
@@ -57,6 +56,13 @@ function audienceCondition(role: SessionUser['role']) {
     eq(announcements.audience, audience),
   );
 }
+
+const PANEL_NAV = `<nav class="bottom" style="margin-bottom:1rem">
+  <a href="/app">Inicio</a>
+  <a href="/ranking">Ranking</a>
+  <a href="/tienda">Tienda</a>
+  <a href="/perfil">Tu perfil</a>
+</nav>`;
 
 function progressBar(progress: number, goalValue: number): string {
   const pct =
@@ -230,7 +236,7 @@ appRoutes.get('/app', requireAuth(), async (c) => {
 
   const greeting = `<div class="card">
     <h1>Hola, ${escapeHtml(user.name)}</h1>
-    <p>Sumá puntos iniciando sesión todos los días, completando desafíos semanales y ganando batallas.</p>
+    <p>Sumá puntos iniciando sesión todos los días y completando desafíos semanales.</p>
     <p class="muted">
       Tenés <strong>${user.points} puntos</strong>
       · Racha actual: <strong>${profile?.loginStreak ?? 0} día(s)</strong>
@@ -242,7 +248,7 @@ appRoutes.get('/app', requireAuth(), async (c) => {
   return c.html(
     page(
       { title: 'Inicio', brand: brandOf(c), user, error, notice },
-      `${greeting}
+      `${PANEL_NAV}${greeting}
       ${await loadAnnouncementsHtml(db, user, now)}
       ${await loadActiveChallenges(db, user, now)}
       ${await loadPointLogsHtml(db, user.id)}`,

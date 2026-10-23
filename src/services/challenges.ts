@@ -1,7 +1,6 @@
 import { and, count, eq, gte, lte, sql, sum } from 'drizzle-orm';
 import type { Db } from '../db';
 import {
-  battles,
   challengeParticipations,
   orders,
   pointLogs,
@@ -26,8 +25,6 @@ export function goalTypeLabel(goalType: GoalType): string {
   switch (goalType) {
     case 'points':
       return 'puntos';
-    case 'battles_won':
-      return 'batallas ganadas';
     case 'login_days':
       return 'días de sesión';
     case 'sales_amount':
@@ -77,20 +74,6 @@ export async function computeProgress(
             eq(pointLogs.reason, 'login'),
             gte(pointLogs.createdAt, startsAt),
             lte(pointLogs.createdAt, endsAt),
-          ),
-        );
-      return Number(rows[0]?.total ?? 0) || 0;
-    }
-    case 'battles_won': {
-      const rows = await db
-        .select({ total: count() })
-        .from(battles)
-        .where(
-          and(
-            eq(battles.winnerId, user.id),
-            eq(battles.status, 'completed'),
-            gte(battles.completedAt, startsAt),
-            lte(battles.completedAt, endsAt),
           ),
         );
       return Number(rows[0]?.total ?? 0) || 0;

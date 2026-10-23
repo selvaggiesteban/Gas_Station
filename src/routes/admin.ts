@@ -1,12 +1,16 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { and, count, desc, eq, like, or, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/sqlite-core';
 import type { AppEnv } from '../env';
 import { dbOf, brandOf, requireRole } from '../middleware/auth';
 import { page, escapeHtml } from '../lib/html';
 import {
   GOAL_TYPE_VALUES,
+  ORDER_STATUS_VALUES,
   ROLE_VALUES,
+  orderItems,
   orders,
   sessions,
   storeUser,
@@ -14,9 +18,11 @@ import {
   users,
   weeklyChallenges,
 } from '../db/schema';
+import { approveOrder, mimeFromKey, rejectOrder } from '../services/orders';
 
 type Role = (typeof ROLE_VALUES)[number];
 type GoalType = (typeof GOAL_TYPE_VALUES)[number];
+type OrderStatus = (typeof ORDER_STATUS_VALUES)[number];
 
 const ROLE_LABELS: Record<Role, string> = {
   admin: 'Admin',
@@ -27,9 +33,15 @@ const ROLE_LABELS: Record<Role, string> = {
 
 const GOAL_LABELS: Record<GoalType, string> = {
   points: 'Puntos',
-  battles_won: 'Batallas ganadas',
   login_days: 'Días de login',
   sales_amount: 'Monto de ventas',
+};
+
+const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
+  pending: 'Pendiente',
+  paid: 'Pagada',
+  cancelled: 'Rechazada',
+  refunded: 'Reembolsada',
 };
 
 const TH =
@@ -72,6 +84,17 @@ function fmtFecha(d: Date): string {
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function formatArs(cents: number): string {
+  return new Intl.NumberFormat('es-AR', {
+    style: 'currency',
+    currency: 'ARS',
+  }).format(cents / 100);
+}
+
+function isOrderStatus(v: string): v is OrderStatus {
+  return (ORDER_STATUS_VALUES as readonly string[]).includes(v);
+}
+
 function render(
   c: Context<AppEnv>,
   title: string,
@@ -107,13 +130,14 @@ function notFoundBody(volver: string): string {
 }
 
 function adminNav(
-  section: 'panel' | 'usuarios' | 'tiendas' | 'desafios',
+  section: 'panel' | 'usuarios' | 'tiendas' | 'desafios' | 'ordenes',
 ): string {
   const items: Array<{ key: typeof section; label: string; href: string }> = [
     { key: 'panel', label: 'Panel', href: '/admin' },
     { key: 'usuarios', label: 'Usuarios', href: '/admin/usuarios' },
     { key: 'tiendas', label: 'Tiendas', href: '/admin/tiendas' },
     { key: 'desafios', label: 'Desafíos', href: '/admin/desafios' },
+    { key: 'ordenes', label: 'Órdenes', href: '/admin/ordenes' },
   ];
   return `<p class="row" style="margin-top:0">${items
     .map(
@@ -170,6 +194,7 @@ adminRoutes.get('/admin', async (c) => {
           <li><a href="/admin/usuarios">Usuarios y roles</a></li>
           <li><a href="/admin/tiendas">Tiendas y gestores</a></li>
           <li><a href="/admin/desafios">Desafíos semanales</a></li>
+          <li><a href="/admin/ordenes">Órdenes y comprobantes</a></li>
         </ul>
       </div>`,
     ),
@@ -900,4 +925,403 @@ adminRoutes.post('/admin/desafios/:id/activo', async (c) => {
     });
   }
   return c.redirect(avisado('/admin/desafios'));
+});
+
+// ----------------------------------------------------------------- órdenes
+
+const ORDENES_PAGE_SIZE = 20;
+
+function ordenAvisoDe(c: Context<AppEnv>): string | undefined {
+  const v = c.req.query('aviso');
+  if (v === 'aprobada') {
+    return 'Orden aprobada. Si correspondía, se acreditaron los puntos.';
+  }
+  if (v === 'rechazada') return 'Orden rechazada y stock devuelto.';
+  if (v === 'ok') return 'Cambios guardados.';
+  return undefined;
+}
+
+function ordenesHref(filtros: Record<string, string>, page: number): string {
+  const params = new URLSearchParams(filtros);
+  if (page > 1) params.set('page', String(page));
+  const qs = params.toString();
+  return `/admin/ordenes${qs ? `?${qs}` : ''}`;
+}
+
+function ordenErrorBody(volver: string): string {
+  return `<div class="card"><h1>No se pudo completar</h1>
+    <p class="muted">Volvé al detalle de la orden para revisar su estado.</p>
+    <a class="btn secondary" href="${volver}">Volver a la orden</a></div>`;
+}
+
+adminRoutes.get('/admin/ordenes', async (c) => {
+  const db = dbOf(c);
+  const estadoRaw = str(c.req.query('estado'));
+  const estado = isOrderStatus(estadoRaw) ? estadoRaw : null;
+  const tiendaRaw = Number(str(c.req.query('tienda')));
+  const tiendaId =
+    Number.isInteger(tiendaRaw) && tiendaRaw > 0 ? tiendaRaw : null;
+  const q = str(c.req.query('q'));
+  const pageRaw = Number(str(c.req.query('page')));
+  const pageNum = Number.isInteger(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+
+  const conds: SQL[] = [];
+  if (estado) conds.push(eq(orders.status, estado));
+  if (tiendaId) conds.push(eq(orders.storeId, tiendaId));
+  if (q) {
+    conds.push(or(like(orders.number, `%${q}%`), like(users.email, `%${q}%`))!);
+  }
+  const where = conds.length > 0 ? and(...conds) : undefined;
+
+  const totalRows = await db
+    .select({ n: count() })
+    .from(orders)
+    .innerJoin(users, eq(orders.userId, users.id))
+    .where(where);
+  const total = totalRows[0]?.n ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / ORDENES_PAGE_SIZE));
+
+  const gestores = alias(users, 'gestor_alias');
+  const rows = await db
+    .select({
+      id: orders.id,
+      number: orders.number,
+      createdAt: orders.createdAt,
+      totalCents: orders.totalCents,
+      status: orders.status,
+      proofKey: orders.proofKey,
+      cliente: users.name,
+      email: users.email,
+      tienda: stores.name,
+      gestor: gestores.name,
+    })
+    .from(orders)
+    .innerJoin(users, eq(orders.userId, users.id))
+    .innerJoin(stores, eq(orders.storeId, stores.id))
+    .leftJoin(gestores, eq(orders.gestorId, gestores.id))
+    .where(where)
+    .orderBy(desc(orders.createdAt), desc(orders.id))
+    .limit(ORDENES_PAGE_SIZE)
+    .offset((pageNum - 1) * ORDENES_PAGE_SIZE);
+
+  const tiendasRows = await db
+    .select({ id: stores.id, name: stores.name })
+    .from(stores)
+    .orderBy(stores.name);
+
+  const opcionesEstado = ORDER_STATUS_VALUES.map(
+    (s) =>
+      `<option value="${s}"${s === estado ? ' selected' : ''}>${ORDER_STATUS_LABELS[s]}</option>`,
+  ).join('');
+  const opcionesTienda = tiendasRows
+    .map(
+      (s) =>
+        `<option value="${s.id}"${s.id === tiendaId ? ' selected' : ''}>${escapeHtml(s.name)}</option>`,
+    )
+    .join('');
+
+  const bodyRows = rows
+    .map(
+      (o) => `<tr>
+      <td style="${TD}">${escapeHtml(o.number)}</td>
+      <td style="${TD}">${fmtFecha(o.createdAt)}</td>
+      <td style="${TD}">${escapeHtml(o.cliente)}<br><span class="muted">${escapeHtml(o.email)}</span></td>
+      <td style="${TD}">${escapeHtml(o.tienda)}</td>
+      <td style="${TD}">${o.gestor ? escapeHtml(o.gestor) : '<span class="muted">—</span>'}</td>
+      <td style="${TD}">${formatArs(o.totalCents)}</td>
+      <td style="${TD}"><span class="pill">${ORDER_STATUS_LABELS[o.status] ?? o.status}</span></td>
+      <td style="${TD}">${
+        o.proofKey
+          ? `<a href="/admin/comprobantes/${o.id}"><img src="/admin/comprobantes/${o.id}" alt="Comprobante" style="height:2.5rem;border-radius:0.3rem;border:1px solid #e7e5e4;object-fit:cover"></a>`
+          : '<span class="muted">No</span>'
+      }</td>
+      <td style="${TD}"><a class="btn secondary" href="/admin/ordenes/${o.id}" style="${SMALL_BTN}">Detalle</a></td>
+    </tr>`,
+    )
+    .join('');
+
+  const filtros: Record<string, string> = {};
+  if (estado) filtros.estado = estado;
+  if (tiendaId) filtros.tienda = String(tiendaId);
+  if (q) filtros.q = q;
+
+  const paginacion =
+    totalPages > 1
+      ? `<div class="row" style="margin-top:0.75rem">
+          ${pageNum > 1 ? `<a class="btn secondary" href="${ordenesHref(filtros, pageNum - 1)}" style="${SMALL_BTN}">Anterior</a>` : ''}
+          <span class="muted">Página ${pageNum} de ${totalPages}</span>
+          ${pageNum < totalPages ? `<a class="btn secondary" href="${ordenesHref(filtros, pageNum + 1)}" style="${SMALL_BTN}">Siguiente</a>` : ''}
+        </div>`
+      : '';
+
+  return c.html(
+    page(
+      {
+        title: 'Órdenes',
+        brand: brandOf(c),
+        user: c.get('user'),
+        notice: ordenAvisoDe(c),
+      },
+      `<div class="card">
+        <h1>Órdenes</h1>
+        ${adminNav('ordenes')}
+        <form method="get" action="/admin/ordenes" class="row">
+          <select name="estado" style="width:auto;margin-top:0">
+            <option value="">Todos los estados</option>
+            ${opcionesEstado}
+          </select>
+          <select name="tienda" style="width:auto;margin-top:0">
+            <option value="">Todas las tiendas</option>
+            ${opcionesTienda}
+          </select>
+          <input type="search" name="q" value="${escapeHtml(q)}" placeholder="Número o email" style="flex:1;min-width:12rem;margin-top:0">
+          <button type="submit" style="${SMALL_BTN}">Buscá</button>
+        </form>
+        <p class="muted">${total} orden${total === 1 ? '' : 'es'}</p>
+        <table style="width:100%;border-collapse:collapse;margin-top:0.5rem">
+          <thead><tr>
+            <th style="${TH}">Número</th>
+            <th style="${TH}">Fecha</th>
+            <th style="${TH}">Cliente</th>
+            <th style="${TH}">Tienda</th>
+            <th style="${TH}">Gestor</th>
+            <th style="${TH}">Total</th>
+            <th style="${TH}">Estado</th>
+            <th style="${TH}">Comprobante</th>
+            <th style="${TH}">Acciones</th>
+          </tr></thead>
+          <tbody>${bodyRows || `<tr><td colspan="9" style="${TD}" class="muted">No hay órdenes para mostrar.</td></tr>`}</tbody>
+        </table>
+        ${paginacion}
+      </div>`,
+    ),
+  );
+});
+
+adminRoutes.get('/admin/ordenes/:id', async (c) => {
+  const id = parseIdParam(c.req.param('id'));
+  const volver = '/admin/ordenes';
+  if (!id) {
+    return render(c, 'Ordenes', notFoundBody(volver), { status: 404 });
+  }
+  const db = dbOf(c);
+  const orderRows = await db
+    .select()
+    .from(orders)
+    .where(eq(orders.id, id))
+    .limit(1);
+  const order = orderRows[0];
+  if (!order) {
+    return render(c, 'Ordenes', notFoundBody(volver), { status: 404 });
+  }
+
+  const [clienteRows, gestorRows, storeRows, items, aprobadorRows] =
+    await Promise.all([
+      db
+        .select({ name: users.name, email: users.email })
+        .from(users)
+        .where(eq(users.id, order.userId))
+        .limit(1),
+      order.gestorId === null
+        ? Promise.resolve([])
+        : db
+            .select({ name: users.name })
+            .from(users)
+            .where(eq(users.id, order.gestorId))
+            .limit(1),
+      db
+        .select({ name: stores.name, zone: stores.zone })
+        .from(stores)
+        .where(eq(stores.id, order.storeId))
+        .limit(1),
+      db.select().from(orderItems).where(eq(orderItems.orderId, order.id)),
+      order.approvedBy === null
+        ? Promise.resolve([])
+        : db
+            .select({ name: users.name })
+            .from(users)
+            .where(eq(users.id, order.approvedBy))
+            .limit(1),
+    ]);
+  const cliente = clienteRows[0];
+  const gestor = gestorRows[0];
+  const store = storeRows[0];
+  const aprobador = aprobadorRows[0];
+
+  const itemsHtml = items
+    .map(
+      (it) => `<tr>
+      <td style="${TD}">${escapeHtml(it.nameSnapshot)}</td>
+      <td style="${TD}">${it.qty}</td>
+      <td style="${TD}">${formatArs(it.unitPriceCents)}</td>
+      <td style="${TD}">${formatArs(it.unitPriceCents * it.qty)}</td>
+    </tr>`,
+    )
+    .join('');
+
+  const proofHtml = order.proofKey
+    ? `<p><a href="/admin/comprobantes/${order.id}">Ver comprobante</a></p>
+       <img src="/admin/comprobantes/${order.id}" alt="Comprobante" style="max-width:100%;border-radius:0.5rem;border:1px solid #e7e5e4;margin-top:0.5rem">`
+    : '<p class="muted">Sin comprobante adjunto.</p>';
+
+  const acciones =
+    order.status === 'pending'
+      ? `<div class="row" style="margin-top:1rem">
+          <form method="post" action="/admin/ordenes/${order.id}/aprobar" style="display:inline;margin-top:0">
+            <button type="submit" style="${SMALL_BTN}">Aprobá el pago</button>
+          </form>
+          <form method="post" action="/admin/ordenes/${order.id}/rechazar" style="display:inline;margin-top:0;min-width:14rem">
+            <label for="motivo-${order.id}" style="margin-top:0">Motivo del rechazo</label>
+            <textarea id="motivo-${order.id}" name="motivo" rows="2" required></textarea>
+            <button type="submit" class="secondary" style="${SMALL_BTN}">Rechazá</button>
+          </form>
+        </div>`
+      : '';
+
+  const historial = [
+    order.paidAt ? `<div class="row"><span>Pago registrado</span><span>${fmtFecha(order.paidAt)}</span></div>` : '',
+    order.approvedAt
+      ? `<div class="row"><span>Aprobada</span><span>${fmtFecha(order.approvedAt)}${aprobador ? ` · por ${escapeHtml(aprobador.name)}` : ''}</span></div>`
+      : '',
+    order.notes
+      ? `<div class="row"><span>Motivo de rechazo / nota</span><span>${escapeHtml(order.notes)}</span></div>`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('');
+
+  return c.html(
+    page(
+      {
+        title: `Orden ${order.number}`,
+        brand: brandOf(c),
+        user: c.get('user'),
+        notice: ordenAvisoDe(c),
+      },
+      `<div class="card">
+        <h1>Orden ${escapeHtml(order.number)}</h1>
+        ${adminNav('ordenes')}
+        <div class="row">
+          <span class="pill">${ORDER_STATUS_LABELS[order.status] ?? order.status}</span>
+          <span class="muted">Creada: ${fmtFecha(order.createdAt)}</span>
+          <span class="muted">Pago: ${order.paymentMethod === 'transferencia' ? 'Transferencia bancaria' : 'Mercado Pago'}</span>
+        </div>
+        <p class="muted">Cliente: ${cliente ? `${escapeHtml(cliente.name)} · ${escapeHtml(cliente.email)}` : `#${order.userId}`} · Tienda: ${store ? escapeHtml(store.name) : `#${order.storeId}`}${gestor ? ` · Gestor: ${escapeHtml(gestor.name)}` : ''}</p>
+        ${acciones}
+      </div>
+      <div class="card">
+        <h2>Productos</h2>
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th style="${TH}">Producto</th>
+            <th style="${TH}">Cantidad</th>
+            <th style="${TH}">Precio unitario</th>
+            <th style="${TH}">Subtotal</th>
+          </tr></thead>
+          <tbody>${itemsHtml || `<tr><td colspan="4" style="${TD}" class="muted">Sin ítems.</td></tr>`}</tbody>
+        </table>
+        <div class="row" style="margin-top:0.75rem"><span>Subtotal</span><span>${formatArs(order.subtotalCents)}</span></div>
+        <div class="row"><span>Descuento</span><span>-${formatArs(order.discountCents)}</span></div>
+        <div class="row"><strong>Total</strong><strong>${formatArs(order.totalCents)}</strong></div>
+      </div>
+      <div class="card">
+        <h2>Comprobante</h2>
+        ${proofHtml}
+      </div>
+      ${
+        historial
+          ? `<div class="card"><h2>Historial</h2>${historial}</div>`
+          : ''
+      }
+      <div class="card">
+        <a class="btn secondary" href="/admin/ordenes">Volver a órdenes</a>
+      </div>`,
+    ),
+  );
+});
+
+adminRoutes.get('/admin/comprobantes/:id', async (c) => {
+  const id = parseIdParam(c.req.param('id'));
+  if (!id) return c.notFound();
+  const db = dbOf(c);
+  const rows = await db
+    .select({ proofKey: orders.proofKey })
+    .from(orders)
+    .where(eq(orders.id, id))
+    .limit(1);
+  const proofKey = rows[0]?.proofKey;
+  if (!proofKey) return c.notFound();
+  const obj = await c.env.R2.get(proofKey);
+  if (!obj) return c.notFound();
+  const contentType = obj.httpMetadata?.contentType ?? mimeFromKey(proofKey);
+  return new Response(obj.body, {
+    headers: {
+      'Content-Type': contentType,
+      'Cache-Control': 'private, max-age=300',
+    },
+  });
+});
+
+adminRoutes.post('/admin/ordenes/:id/aprobar', async (c) => {
+  const id = parseIdParam(c.req.param('id'));
+  if (!id) {
+    return render(c, 'Ordenes', notFoundBody('/admin/ordenes'), {
+      status: 404,
+    });
+  }
+  const db = dbOf(c);
+  const orderRows = await db
+    .select()
+    .from(orders)
+    .where(eq(orders.id, id))
+    .limit(1);
+  const order = orderRows[0];
+  if (!order) {
+    return render(c, 'Ordenes', notFoundBody('/admin/ordenes'), {
+      status: 404,
+    });
+  }
+  const me = c.get('user')!;
+  const result = await approveOrder(db, order, me.id);
+  if (!result.ok) {
+    return render(c, 'Ordenes', ordenErrorBody(`/admin/ordenes/${id}`), {
+      error: result.error,
+    });
+  }
+  return c.redirect(`/admin/ordenes/${id}?aviso=aprobada`);
+});
+
+adminRoutes.post('/admin/ordenes/:id/rechazar', async (c) => {
+  const id = parseIdParam(c.req.param('id'));
+  if (!id) {
+    return render(c, 'Ordenes', notFoundBody('/admin/ordenes'), {
+      status: 404,
+    });
+  }
+  const db = dbOf(c);
+  const orderRows = await db
+    .select()
+    .from(orders)
+    .where(eq(orders.id, id))
+    .limit(1);
+  const order = orderRows[0];
+  if (!order) {
+    return render(c, 'Ordenes', notFoundBody('/admin/ordenes'), {
+      status: 404,
+    });
+  }
+  const body = await c.req.parseBody();
+  const motivo = str(body.motivo);
+  if (!motivo) {
+    return render(c, 'Ordenes', ordenErrorBody(`/admin/ordenes/${id}`), {
+      error: 'Ingresá el motivo del rechazo.',
+    });
+  }
+  const result = await rejectOrder(db, order, motivo);
+  if (!result.ok) {
+    return render(c, 'Ordenes', ordenErrorBody(`/admin/ordenes/${id}`), {
+      error: result.error,
+    });
+  }
+  return c.redirect(`/admin/ordenes/${id}?aviso=rechazada`);
 });

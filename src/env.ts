@@ -5,6 +5,11 @@ export type Bindings = {
   R2: R2Bucket;
   BRAND_NAME?: string;
   PBKDF2_ITERATIONS?: string;
+  GMAIL_USER?: string;
+  GMAIL_APP_PASSWORD?: string;
+  GMAIL_SMTP_HOST?: string;
+  GMAIL_SMTP_PORT?: string;
+  EMAIL_FROM?: string;
 };
 
 export type AppEnv = {

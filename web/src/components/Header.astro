@@ -1,0 +1,52 @@
+---
+interface Props {
+  current: 'inicio' | 'precios' | 'contacto';
+}
+
+const { current } = Astro.props;
+
+const links = [
+  { id: 'inicio', href: '/', label: 'Inicio' },
+  { id: 'precios', href: '/precios/', label: 'Precios' },
+  { id: 'contacto', href: '/contacto/', label: 'Contacto' },
+] as const;
+
+const registroUrl = 'https://gas-station.selvaggi-esteban.workers.dev/registro';
+---
+
+<header class="sticky top-0 z-40 border-b border-zinc-200 bg-white/95 backdrop-blur">
+  <div class="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-3 px-4 py-4 sm:px-6">
+    <a href="/" class="flex items-center gap-2.5" aria-label="Gas Station, ir al inicio">
+      <svg viewBox="0 0 32 32" aria-hidden="true" class="h-8 w-8">
+        <rect width="32" height="32" rx="7" fill="#09090b"></rect>
+        <path d="M16 5.5c0 0-7 8.1-7 12.4a7 7 0 0 0 14 0C23 13.6 16 5.5 16 5.5z" fill="#fff"></path>
+        <circle cx="16" cy="18.5" r="2.6" fill="#09090b"></circle>
+      </svg>
+      <span class="text-lg font-bold tracking-tight">Gas Station</span>
+    </a>
+    <nav aria-label="Principal" class="flex flex-wrap items-center gap-x-5 gap-y-2">
+      {
+        links.map((link) => (
+          <a
+            href={link.href}
+            class:list={[
+              'text-sm font-medium transition-colors',
+              current === link.id
+                ? 'text-zinc-900 underline decoration-zinc-900 decoration-2 underline-offset-4'
+                : 'text-zinc-600 hover:text-zinc-900',
+            ]}
+            aria-current={current === link.id ? 'page' : undefined}
+          >
+            {link.label}
+          </a>
+        ))
+      }
+      <a
+        href={registroUrl}
+        class="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-zinc-700"
+      >
+        Empezar
+      </a>
+    </nav>
+  </div>
+</header>

@@ -47,12 +47,12 @@ button.secondary, .btn.secondary { background: #3f3f46; color: #ffffff; }
   padding: 0.1rem 0.6rem; font-size: 0.8rem; font-weight: 700; }
 a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 nav.bottom a { margin-right: 1rem; color: var(--muted); text-decoration: none; font-size: 0.9rem; }
-header.top { background: var(--fg); color: #ffffff; position: sticky; top: 0; z-index: 40; }
+header.top { background: var(--surface); color: var(--fg); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 40; }
 header.top .wrap { display: flex; align-items: center; justify-content: space-between;
   gap: 0.75rem; padding: 0.75rem 1.5rem; flex-wrap: wrap; max-width: 1366px; margin: 0 auto; }
-header.top a { color: #ffffff; text-decoration: none; font-weight: 600; }
+header.top a { color: var(--fg); text-decoration: none; font-weight: 600; }
 header.top .btn, header.top button { background: #ffffff; color: var(--fg); margin-top: 0;
-  padding: 0.45rem 0.9rem; }
+  padding: 0.45rem 0.9rem; border: 1px solid var(--border); }
 .brand { display: flex; align-items: center; gap: 0.5rem; }
 .brand img { width: 28px; height: 28px; flex-shrink: 0; }
 main.landing { max-width: 72rem; }
@@ -82,10 +82,10 @@ main.landing { max-width: 72rem; }
 .features li:first-child { border-top: 0; }
 .contact { max-width: 32rem; }
 .contact textarea { resize: vertical; }
-.foot { background: var(--fg); color: #ffffff; margin-top: 4rem; }
+.foot { background: var(--surface); color: var(--fg); border-top: 1px solid var(--border); margin-top: 4rem; }
 .foot .wrap { max-width: 1366px; margin: 0 auto; display: flex; gap: 0.75rem; align-items: center;
   justify-content: space-between; flex-wrap: wrap; padding-top: 1.25rem; padding-bottom: 1.25rem; }
-.foot .muted { color: #a1a1aa; }
+.foot .muted { color: var(--muted); }
 @media (max-width: 48rem) {
   .wrap { padding: 1rem; }
   header.top .wrap { padding: 0.65rem 1rem; }

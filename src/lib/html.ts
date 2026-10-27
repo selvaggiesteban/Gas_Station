@@ -7,6 +7,10 @@ export type PageOptions = {
   landing?: boolean;
 };
 
+const LOGO_SVG = `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:block;">
+  <path d="M12 22c-4.97 0-9-4.03-9-9s4.03-9 9-9 9 4.03 9 9-4.03 9-9 9zM12 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/>
+</svg>`;
+
 const BASE_STYLE = `
 :root { color-scheme: light;
   --bg: #fafafa; --fg: #0a0a0a; --surface: #ffffff; --border: #e4e4e7;
@@ -19,6 +23,8 @@ html { scroll-behavior: smooth; }
 body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   background: var(--bg); color: var(--fg); line-height: 1.5; }
 .wrap { max-width: 42rem; margin: 0 auto; padding: 1.5rem; }
+header.top .wrap { max-width: 1366px; }
+.foot .wrap { max-width: 1366px; }
 .card { background: var(--surface); border: 1px solid var(--border);
   border-radius: 0.75rem; padding: 1.25rem; margin-bottom: 1rem; }
 h1 { font-size: 1.35rem; margin: 0 0 0.75rem; }
@@ -50,8 +56,7 @@ header.top a { color: #ffffff; text-decoration: none; font-weight: 600; }
 header.top .btn, header.top button { background: #ffffff; color: var(--fg); margin-top: 0;
   padding: 0.45rem 0.9rem; }
 .brand { display: flex; align-items: center; gap: 0.5rem; }
-.brand .dot { width: 0.9rem; height: 0.9rem; border-radius: 999px;
-  background: var(--brand-contrast); display: inline-block; }
+.brand svg { width: 28px; height: 28px; flex-shrink: 0; }
 main.landing { max-width: 72rem; }
 .hero { padding: 3.5rem 0 1rem; }
 .hero h1 { font-size: clamp(2rem, 6vw, 3rem); line-height: 1.1; margin: 0 0 1rem;
@@ -142,7 +147,7 @@ export function page(opts: PageOptions, body: string): string {
 
   const footer = opts.landing
     ? `<footer class="foot"><div class="wrap">
-  <span class="brand"><span class="dot"></span>${esc(brand)}</span>
+  <span class="brand">${LOGO_SVG}<span>${esc(brand)}</span></span>
   <span class="muted">© ${new Date().getFullYear()} ${esc(brand)}. Todos los derechos reservados.</span>
 </div></footer>`
     : '';
@@ -157,7 +162,7 @@ export function page(opts: PageOptions, body: string): string {
 </head>
 <body${opts.user ? '' : ' class="public"'}>
 <header class="top"><div class="wrap">
-  <a class="brand" href="/"><span class="dot"></span>${esc(brand)}</a>
+  <a class="brand" href="/">${LOGO_SVG}<span>${esc(brand)}</span></a>
   ${nav}
 </div></header>
 <main class="wrap${opts.landing ? ' landing' : ''}">

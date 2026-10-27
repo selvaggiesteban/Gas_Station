@@ -28,9 +28,11 @@ type Shift = (typeof SHIFT_VALUES)[number];
 type Fuel = (typeof FUEL_PRODUCT_VALUES)[number];
 
 const TH =
-  'text-align:left;padding:0.45rem 0.6rem;border-bottom:1px solid #e7e5e4;font-size:0.85rem';
+  'text-align:left;padding:0.5rem 0.75rem;border:1px solid var(--paper-border);font-weight:700;text-align:left;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;background:var(--paper-head)';
 const TD =
-  'padding:0.45rem 0.6rem;border-bottom:1px solid #f5f5f4;font-size:0.9rem;vertical-align:top';
+  'padding:0.5rem 0.75rem;border:1px solid var(--paper-border);font-size:0.9rem;vertical-align:top';
+const TD_NUM =
+  'padding:0.5rem 0.75rem;border:1px solid var(--paper-border);font-size:0.9rem;vertical-align:top;text-align:right;font-variant-numeric:tabular-nums';
 const SMALL_BTN = 'margin-top:0;padding:0.35rem 0.7rem';
 
 const NO_DATA = 'Sin registros todavía.';
@@ -539,7 +541,7 @@ operativaRoutes.get('/operativa/caja', async (c) => {
       <p class="muted">Una caja por tienda y día. Al cerrar, la diferencia se calcula como contado menos declarado.</p>
       ${filterBar('/operativa/caja', fecha, storesHtml)}
       <a class="btn" href="/operativa/caja/nuevo">Cargá la apertura</a>
-      <table style="width:100%;border-collapse:collapse;margin-top:0.75rem">
+      <table class="papel" style="margin-top:0.75rem">
         <thead><tr>
           <th style="${TH}">Fecha</th>
           <th style="${TH}">Estado</th>
@@ -618,7 +620,7 @@ operativaRoutes.get('/operativa/sorteo', async (c) => {
       <p class="muted">Los códigos se generan en el servidor y son únicos. Emitidos: ${rows.length} · Ganadores: ${ganadores}.</p>
       ${filterBar('/operativa/sorteo', '', storesHtml)}
       <a class="btn" href="/operativa/sorteo/nuevo">Emití cupones</a>
-      <table style="width:100%;border-collapse:collapse;margin-top:0.75rem">
+      <table class="papel" style="margin-top:0.75rem">
         <thead><tr>
           <th style="${TH}">Código</th>
           <th style="${TH}">Titular</th>
@@ -1009,7 +1011,7 @@ operativaRoutes.get('/operativa/ventas', async (c) => {
       <p class="muted">Un registro por tienda, día y turno. El total se suma en el servidor.</p>
       ${filterBar('/operativa/ventas', fecha, storesHtml)}
       <a class="btn" href="/operativa/ventas/nuevo">Cargá un turno</a>
-      <table style="width:100%;border-collapse:collapse;margin-top:0.75rem">
+      <table class="papel" style="margin-top:0.75rem">
         <thead><tr>
           <th style="${TH}">Fecha</th>
           <th style="${TH}">Turno</th>
@@ -1278,7 +1280,7 @@ operativaRoutes.get('/operativa/actividades', async (c) => {
       <p class="muted">Una fila por turno con la matriz de GNC. El volumen se calcula como cierre menos apertura.</p>
       ${filterBar('/operativa/actividades', fecha, storesHtml)}
       <a class="btn" href="/operativa/actividades/nuevo">Cargá un turno</a>
-      <table style="width:100%;border-collapse:collapse;margin-top:0.75rem">
+      <table class="papel" style="margin-top:0.75rem">
         <thead><tr>
           <th style="${TH}">Fecha</th>
           <th style="${TH}">Turno</th>
@@ -1504,7 +1506,7 @@ operativaRoutes.get('/operativa/lubricantes', async (c) => {
       <p class="muted">El cierre se calcula en el servidor como apertura más entradas menos salidas.</p>
       ${filterBar('/operativa/lubricantes', fecha, storesHtml)}
       <a class="btn" href="/operativa/lubricantes/nuevo">Cargá un recuento</a>
-      <table style="width:100%;border-collapse:collapse;margin-top:0.75rem">
+      <table class="papel" style="margin-top:0.75rem">
         <thead><tr>
           <th style="${TH}">Fecha</th>
           <th style="${TH}">Marca</th>
@@ -1975,7 +1977,7 @@ operativaRoutes.get('/operativa/rendicion', async (c) => {
       <p class="muted">Encabezado del turno más las lecturas de cada surtidor y boquilla.</p>
       ${filterBar('/operativa/rendicion', fecha, storesHtml)}
       <a class="btn" href="/operativa/rendicion/nuevo">Cargá una rendición</a>
-      <table style="width:100%;border-collapse:collapse;margin-top:0.75rem">
+      <table class="papel" style="margin-top:0.75rem">
         <thead><tr>
           <th style="${TH}">Fecha</th>
           <th style="${TH}">Turno</th>
@@ -2217,7 +2219,7 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
         <span>Cierre de caja: <strong>${formatArs(report.closingCents)}</strong></span>
       </div>
       ${report.notes ? `<p class="muted">Notas: ${escapeHtml(report.notes)}</p>` : ''}
-      <table style="width:100%;border-collapse:collapse;margin-top:0.75rem">
+      <table class="papel" style="margin-top:0.75rem">
         <thead><tr>
           <th style="${TH}">Surtidor</th>
           <th style="${TH}">Boquilla</th>

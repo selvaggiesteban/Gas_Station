@@ -16,15 +16,15 @@ const BASE_STYLE = `
   --bg: #fafafa; --fg: #0a0a0a; --surface: #ffffff; --border: #e4e4e7;
   --muted: #71717a; --brand: #0a0a0a; --on-brand: #ffffff; --brand-contrast: #ffffff;
   --danger-bg: #18181b; --danger-fg: #ffffff; --danger-border: #18181b;
-  --ok-bg: #f4f4f5; --ok-fg: #18181b; --ok-border: #a1a1aa; }
+  --ok-bg: #f4f4f5; --ok-fg: #18181b; --ok-border: #a1a1aa;
+  --sidebar-bg: #f3f3f3; --sidebar-border: #d4d4d4; --paper-border: #0a0a0a;
+  --paper-head: #e4e4e7; --paper-row-alt: #f3f3f3; }
 body.public { --brand: #0a0a0a; --on-brand: #ffffff; --brand-contrast: #ffffff; }
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   background: var(--bg); color: var(--fg); line-height: 1.5; }
 .wrap { max-width: 42rem; margin: 0 auto; padding: 1.5rem; }
-header.top .wrap { max-width: 1366px; }
-.foot .wrap { max-width: 1366px; }
 .card { background: var(--surface); border: 1px solid var(--border);
   border-radius: 0.75rem; padding: 1.25rem; margin-bottom: 1rem; }
 h1 { font-size: 1.35rem; margin: 0 0 0.75rem; }
@@ -51,7 +51,7 @@ a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 nav.bottom a { margin-right: 1rem; color: var(--muted); text-decoration: none; font-size: 0.9rem; }
 header.top { background: var(--fg); color: #ffffff; position: sticky; top: 0; z-index: 40; }
 header.top .wrap { display: flex; align-items: center; justify-content: space-between;
-  gap: 0.75rem; padding: 0.75rem 1.5rem; flex-wrap: wrap; }
+  gap: 0.75rem; padding: 0.75rem 1.5rem; flex-wrap: wrap; max-width: 1366px; margin: 0 auto; }
 header.top a { color: #ffffff; text-decoration: none; font-weight: 600; }
 header.top .btn, header.top button { background: #ffffff; color: var(--fg); margin-top: 0;
   padding: 0.45rem 0.9rem; }
@@ -85,7 +85,7 @@ main.landing { max-width: 72rem; }
 .contact { max-width: 32rem; }
 .contact textarea { resize: vertical; }
 .foot { background: var(--fg); color: #ffffff; margin-top: 4rem; }
-.foot .wrap { max-width: 72rem; display: flex; gap: 0.75rem; align-items: center;
+.foot .wrap { max-width: 1366px; margin: 0 auto; display: flex; gap: 0.75rem; align-items: center;
   justify-content: space-between; flex-wrap: wrap; padding-top: 1.25rem; padding-bottom: 1.25rem; }
 .foot .muted { color: #a1a1aa; }
 @media (max-width: 48rem) {
@@ -97,6 +97,56 @@ main.landing { max-width: 72rem; }
   .section > h2 { font-size: 1.4rem; }
   .foot .wrap { justify-content: flex-start; }
 }
+
+/* --- Barra lateral (admin / store_manager) --- */
+.sidebar { position: fixed; top: 0; left: 0; width: 210px; height: 100vh;
+  background: var(--sidebar-bg); border-right: 1px solid var(--sidebar-border);
+  padding-top: 4.2rem; padding-bottom: 1rem; overflow-y: auto; z-index: 50; }
+.sidebar .sid-brand { padding: 0.75rem 1rem; font-weight: 800; font-size: 1.05rem;
+  color: var(--fg); border-bottom: 1px solid var(--sidebar-border); margin-bottom: 0.5rem; }
+.sidebar .sid-user { padding: 0.75rem 1rem; font-size: 0.8rem; color: var(--muted);
+  border-bottom: 1px solid var(--sidebar-border); margin-bottom: 0.75rem; }
+.sidebar a { display: block; padding: 0.6rem 1rem; color: var(--fg); text-decoration: none;
+  border-radius: 0.4rem; margin-bottom: 0.2rem; font-size: 0.9rem; }
+.sidebar a.active { background: var(--fg); color: #ffffff; }
+.sidebar a:hover { background: var(--sidebar-border); }
+.sidebar .sep { height: 1px; background: var(--sidebar-border); margin: 0.5rem 0; }
+.sidebar .sid-foot { padding: 0.75rem 1rem; font-size: 0.75rem; color: var(--muted);
+  border-top: 1px solid var(--sidebar-border); margin-top: 0.75rem; }
+
+.layout-user { display: flex; margin-top: 0; }
+.layout-user main { flex: 1; padding: 1rem 1.5rem; min-width: 0; }
+.layout-user .wrap { max-width: none; margin: 0; padding: 0; }
+.layout-user header.top .wrap { max-width: none; }
+
+/* --- Tablas tipo papel (formularios de estación) --- */
+table.papel { width: 100%; border-collapse: collapse; border: 2px solid var(--paper-border); }
+table.papel th { background: var(--paper-head); border: 1px solid var(--paper-border);
+  padding: 0.5rem 0.75rem; font-weight: 700; text-align: left; font-size: 0.8rem;
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg); }
+table.papel td { border: 1px solid var(--paper-border); padding: 0.5rem 0.75rem;
+  font-size: 0.9rem; vertical-align: top; }
+table.papel td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.papel tr:nth-child(even) td { background: var(--paper-row-alt); }
+table.papel .seccion { background: var(--paper-head); font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.8rem; }
+
+/* --- Secciones tipo formulario impreso --- */
+.seccion-papel { border: 1px solid var(--paper-border); padding: 1rem; margin-bottom: 1rem;
+  background: var(--surface); page-break-inside: avoid; }
+.seccion-papel h2 { background: var(--paper-head); padding: 0.5rem 0.75rem;
+  margin: -1rem -1rem 1rem -1rem; font-size: 0.9rem; text-transform: uppercase;
+  letter-spacing: 0.05em; border-bottom: 1px solid var(--paper-border); }
+.campo-subrayado { border: none; border-bottom: 1px solid var(--paper-border);
+  padding: 0.25rem 0.4rem; font-size: 1rem; background: transparent; color: var(--fg);
+  width: 100%; }
+.campo-subrayado:focus { outline: none; border-bottom-color: var(--fg); }
+.linea-firma { border-bottom: 1px solid var(--paper-border); height: 1.2rem; }
+.cabecera-papel { border: 2px solid var(--paper-border); padding: 0.75rem 1rem;
+  margin-bottom: 1rem; background: var(--surface); }
+.cabecera-papel h1 { font-size: 1.25rem; margin: 0; text-transform: uppercase;
+  letter-spacing: 0.08em; }
+.cabecera-papel .sub { font-size: 0.85rem; color: var(--muted); margin-top: 0.25rem; }
 `;
 
 const AUTH_STYLE = `body { --brand: #eb7716; --on-brand: #ffffff; --brand-contrast: #eb7716; }`;
@@ -113,12 +163,139 @@ export function escapeHtml(value: string): string {
   return esc(value);
 }
 
+function sidebarNav(user: { name: string; points: number; role: string }): string {
+  const role = user.role;
+  const isAdmin = role === 'admin';
+  const isGestor = role === 'store_manager';
+
+  const items: { href: string; label: string }[] = isAdmin
+    ? [
+        { href: '/app', label: 'Inicio' },
+        { href: '/usuarios', label: 'Usuarios' },
+        { href: '/tiendas', label: 'Tiendas' },
+        { href: '/desafios', label: 'Desafíos' },
+        { href: '/ordenes', label: 'Órdenes' },
+        { href: '/operativa', label: 'Operativa' },
+        { href: '/ranking', label: 'Ranking' },
+      ]
+    : isGestor
+      ? [
+          { href: '/app', label: 'Inicio' },
+          { href: '/tienda', label: 'Mi tienda' },
+          { href: '/operativa', label: 'Operativa' },
+          { href: '/ordenes', label: 'Órdenes' },
+          { href: '/ranking', label: 'Ranking' },
+        ]
+      : [
+          { href: '/app', label: 'Inicio' },
+          { href: '/ranking', label: 'Ranking' },
+          { href: '/tienda', label: 'Tienda' },
+          { href: '/perfil', label: 'Tu perfil' },
+        ];
+
+  const links = items
+    .map(
+      (i) => `<a href="${i.href}">${esc(i.label)}</a>`,
+    )
+    .join('');
+
+  const logout = `<form method="post" action="/logout" style="margin:0">
+    <button class="btn secondary" style="width:100%;padding:0.5rem 0.7rem;font-size:0.85rem">Cerrar sesión</button>
+  </form>`;
+
+  return `<aside class="sidebar">
+    <div class="sid-brand">${LOGO_SVG}<span style="margin-left:0.25rem;font-size:0.9rem">${esc(brandOfFake())}</span></div>
+    <div class="sid-user">${esc(user.name)} · ${esc(role)}</div>
+    ${links}
+    <div class="sep"></div>
+    <div class="sid-foot">${logout}</div>
+  </aside>`;
+}
+
+function brandOfFake(): string {
+  return 'Gas Station';
+}
+
+export function page(opts: PageOptions, body: string): string {
+  const brand = opts.brand ?? 'Gas Station';
+  const alerts = [
+    opts.error ? `<div class="alert-error">${esc(opts.error)}</div>` : '',
+    opts.notice ? `<div class="alert-ok">${esc(opts.notice)}</div>` : '',
+  ].join('');
+
+  const footer = opts.landing
+    ? `<footer class="foot"><div class="wrap">
+  <span class="brand">${LOGO_SVG}<span>${esc(brand)}</span></span>
+  <span class="muted">© ${new Date().getFullYear()} ${esc(brand)}. Todos los derechos reservados.</span>
+</div></footer>`
+    : '';
+
+  const head = `<!doctype html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(opts.title)} · ${esc(brand)}</title>
+<style>${BASE_STYLE}${opts.user ? AUTH_STYLE : ''}</style>
+</head>
+<body${opts.user ? '' : ' class="public"'}> `;
+
+  if (opts.user && opts.user.role !== 'customer') {
+    return head +
+      `<aside class="sidebar">
+        <div class="sid-brand">${LOGO_SVG}<span style="margin-left:0.25rem;font-size:0.9rem">${esc(brand)}</span></div>
+        <div class="sid-user">${esc(opts.user.name)} · ${esc(opts.user.role)}</div>
+        ${sidebarLinks(opts.user)}
+        <div class="sep"></div>
+        <div class="sid-foot"><form method="post" action="/logout" style="margin:0"><button class="btn secondary" style="width:100%;padding:0.5rem 0.7rem;font-size:0.85rem">Cerrar sesión</button></form></div>
+      </aside>
+      <main style="margin-left:210px;padding:1rem 1.5rem;min-width:0;">
+        <header class="top"><div class="wrap" style="max-width:none;">
+          <a class="brand" href="/">${LOGO_SVG}<span>${esc(brand)}</span></a>
+          <span class="muted" style="font-size:0.85rem">${esc(opts.user.name)}</span>
+        </div></header>
+        ${alerts}
+        ${body}
+        ${footer}
+      </main>` +
+      `</body></html>`;
+  }
+
+  if (opts.user) {
+    const nav = headerNav(opts);
+    return head +
+      `<header class="top"><div class="wrap">
+        <a class="brand" href="/">${LOGO_SVG}<span>${esc(brand)}</span></a>
+        ${nav}
+      </div></header>
+      <main class="wrap${opts.landing ? ' landing' : ''}">
+      ${alerts}
+      ${body}
+      </main>
+      ${footer}
+      </body></html>`;
+  }
+
+  return head +
+    `<header class="top"><div class="wrap">
+      <a class="brand" href="/">${LOGO_SVG}<span>${esc(brand)}</span></a>
+      ${headerNav(opts)}
+    </div></header>
+    <main class="wrap${opts.landing ? ' landing' : ''}">
+    ${alerts}
+    ${body}
+    </main>
+    ${footer}
+    </body></html>`;
+}
+
 function headerNav(opts: PageOptions): string {
   if (opts.user) {
     return `<div class="row">
         <a href="/app">Inicio</a>
+        <a href="/ranking">Ranking</a>
         <a href="/tienda">Tienda</a>
-        <span class="pill">${esc(opts.user.name)} · ${opts.user.points} pts</span>
+        <a href="/perfil">Tu perfil</a>
         <form method="post" action="/logout" style="display:inline">
           <button class="secondary" style="margin-top:0;padding:0.35rem 0.7rem">Cerrar sesión</button>
         </form>
@@ -136,40 +313,34 @@ function headerNav(opts: PageOptions): string {
   return `<div class="row"><a href="/login">Accedé</a><a href="/registro">Creá tu cuenta</a></div>`;
 }
 
-export function page(opts: PageOptions, body: string): string {
-  const brand = opts.brand ?? 'Gas Station';
-  const nav = headerNav(opts);
+function sidebarLinks(user: { name: string; points: number; role: string }): string {
+  const role = user.role;
+  const isAdmin = role === 'admin';
+  const isGestor = role === 'store_manager';
 
-  const alerts = [
-    opts.error ? `<div class="alert-error">${esc(opts.error)}</div>` : '',
-    opts.notice ? `<div class="alert-ok">${esc(opts.notice)}</div>` : '',
-  ].join('');
+  const items: { href: string; label: string }[] = isAdmin
+    ? [
+        { href: '/app', label: 'Inicio' },
+        { href: '/usuarios', label: 'Usuarios' },
+        { href: '/tiendas', label: 'Tiendas' },
+        { href: '/desafios', label: 'Desafíos' },
+        { href: '/ordenes', label: 'Órdenes' },
+        { href: '/operativa', label: 'Operativa' },
+        { href: '/ranking', label: 'Ranking' },
+      ]
+    : isGestor
+      ? [
+          { href: '/app', label: 'Inicio' },
+          { href: '/tienda', label: 'Mi tienda' },
+          { href: '/operativa', label: 'Operativa' },
+          { href: '/ordenes', label: 'Órdenes' },
+          { href: '/ranking', label: 'Ranking' },
+        ]
+      : [];
 
-  const footer = opts.landing
-    ? `<footer class="foot"><div class="wrap">
-  <span class="brand">${LOGO_SVG}<span>${esc(brand)}</span></span>
-  <span class="muted">© ${new Date().getFullYear()} ${esc(brand)}. Todos los derechos reservados.</span>
-</div></footer>`
-    : '';
-
-  return `<!doctype html>
-<html lang="es-AR">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(opts.title)} · ${esc(brand)}</title>
-<style>${BASE_STYLE}${opts.user ? AUTH_STYLE : ''}</style>
-</head>
-<body${opts.user ? '' : ' class="public"'}>
-<header class="top"><div class="wrap">
-  <a class="brand" href="/">${LOGO_SVG}<span>${esc(brand)}</span></a>
-  ${nav}
-</div></header>
-<main class="wrap${opts.landing ? ' landing' : ''}">
-${alerts}
-${body}
-</main>
-${footer}
-</body>
-</html>`;
+  return items
+    .map(
+      (i) => `<a href="${i.href}">${esc(i.label)}</a>`,
+    )
+    .join('');
 }

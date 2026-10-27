@@ -248,7 +248,7 @@ appRoutes.get('/app', requireAuth(), async (c) => {
   return c.html(
     page(
       { title: 'Inicio', brand: brandOf(c), user, error, notice },
-      `${PANEL_NAV}${greeting}
+      `${user.role === 'customer' ? PANEL_NAV : ''}${greeting}
       ${await loadAnnouncementsHtml(db, user, now)}
       ${await loadActiveChallenges(db, user, now)}
       ${await loadPointLogsHtml(db, user.id)}`,

@@ -45,9 +45,11 @@ const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
 };
 
 const TH =
-  'text-align:left;padding:0.45rem 0.6rem;border-bottom:1px solid #e7e5e4;font-size:0.85rem';
+  'text-align:left;padding:0.5rem 0.75rem;border:1px solid var(--paper-border);font-weight:700;text-align:left;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;background:var(--paper-head)';
 const TD =
-  'padding:0.45rem 0.6rem;border-bottom:1px solid #f5f5f4;font-size:0.9rem;vertical-align:top';
+  'padding:0.5rem 0.75rem;border:1px solid var(--paper-border);font-size:0.9rem;vertical-align:top';
+const TD_NUM =
+  'padding:0.5rem 0.75rem;border:1px solid var(--paper-border);font-size:0.9rem;vertical-align:top;text-align:right;font-variant-numeric:tabular-nums';
 const SMALL_BTN = 'margin-top:0;padding:0.35rem 0.7rem';
 
 function str(v: unknown): string {
@@ -268,7 +270,7 @@ adminRoutes.get('/admin/usuarios', async (c) => {
           <button type="submit" style="${SMALL_BTN}">Buscá</button>
         </form>
         <p class="muted">${rows.length} resultado${rows.length === 1 ? '' : 's'}${rows.length === 50 ? ' (máx. 50)' : ''}</p>
-        <table style="width:100%;border-collapse:collapse;margin-top:0.5rem">
+        <table class="papel";margin-top:0.5rem">
           <thead><tr>
             <th style="${TH}">Nombre</th>
             <th style="${TH}">Email</th>
@@ -421,7 +423,7 @@ adminRoutes.get('/admin/tiendas', async (c) => {
       `<div class="card">
         <h1>Tiendas</h1>
         ${adminNav('tiendas')}
-        <table style="width:100%;border-collapse:collapse">
+        <table class="papel"">
           <thead><tr>
             <th style="${TH}">Nombre</th>
             <th style="${TH}">Zona</th>
@@ -614,7 +616,7 @@ adminRoutes.get('/admin/tiendas/:id', async (c) => {
       </div>
       <div class="card">
         <h2>Gestores asignados</h2>
-        <table style="width:100%;border-collapse:collapse">
+        <table class="papel"">
           <thead><tr>
             <th style="${TH}">Nombre</th>
             <th style="${TH}">Email</th>
@@ -1078,7 +1080,7 @@ adminRoutes.get('/admin/ordenes', async (c) => {
           <button type="submit" style="${SMALL_BTN}">Buscá</button>
         </form>
         <p class="muted">${total} orden${total === 1 ? '' : 'es'}</p>
-        <table style="width:100%;border-collapse:collapse;margin-top:0.5rem">
+        <table class="papel";margin-top:0.5rem">
           <thead><tr>
             <th style="${TH}">Número</th>
             <th style="${TH}">Fecha</th>
@@ -1211,7 +1213,7 @@ adminRoutes.get('/admin/ordenes/:id', async (c) => {
       </div>
       <div class="card">
         <h2>Productos</h2>
-        <table style="width:100%;border-collapse:collapse">
+        <table class="papel"">
           <thead><tr>
             <th style="${TH}">Producto</th>
             <th style="${TH}">Cantidad</th>

@@ -3,8 +3,6 @@ import { SELF } from 'cloudflare:test';
 
 const BASE = 'https://gas-station.test';
 
-const ARS = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' });
-
 const CALIDO = [
   '#eb7716',
   '#f5f4f2',
@@ -36,27 +34,15 @@ describe('app', () => {
     expect(html).toContain('Gas Station');
     expect(html).toContain('Creá tu cuenta');
     expect(html).toContain('lang="es-AR"');
+    expect(html).toContain('class="public"');
   });
 
-  it('landing tiene nav, hero, secciones, precios y contacto', async () => {
+  it('home muestra logotipo centrado y botones Acceder / Crear cuenta', async () => {
     const html = await get('/');
-    expect(html).toContain('href="#incluye"');
-    expect(html).toContain('href="#precios"');
-    expect(html).toContain('href="#contacto"');
-    expect(html).toContain('<section class="hero">');
-    expect(html).toContain('id="incluye"');
-    expect(html).toContain('Qué incluye');
-    expect(html).toContain('id="precios"');
-    expect(html).toContain('Precios');
-    expect(html).toContain('id="contacto"');
-    expect(html).toContain('Contacto');
-    expect(html).toContain(ARS.format(999900 / 100));
-    expect(html).toContain(ARS.format(1999900 / 100));
-    expect(html).toContain(ARS.format(3499900 / 100));
-    expect(html).toContain('/ mes');
-    expect(html).toContain('action="mailto:contacto@gasstation.app"');
-    expect(html).toContain('<footer class="foot">');
-    expect(html).toContain('Todos los derechos reservados');
+    expect(html).toContain('<section class="home">');
+    expect(html).toContain('data:image/png;base64');
+    expect(html).toContain('<a class="btn lg" href="/registro">Creá tu cuenta</a>');
+    expect(html).toContain('<a class="btn secondary lg" href="/login">Accedé</a>');
   });
 
   it('landing público es estrictamente monocromo', async () => {

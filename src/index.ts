@@ -10,7 +10,7 @@ import { shopRoutes } from './routes/shop';
 import { adminRoutes } from './routes/admin';
 import { rankingRoutes } from './routes/ranking';
 import { operativaRoutes } from './routes/operativa';
-import { page, escapeHtml } from './lib/html';
+import { page, escapeHtml, LOGO_IMG } from './lib/html';
 import { configureEmail } from './lib/email';
 import { deleteExpiredSessions } from './lib/session';
 
@@ -27,6 +27,7 @@ app.get('/', (c) => {
   const user = c.get('user');
   if (user) return c.redirect('/app');
   const brand = brandOf(c);
+  const LOGO_IMG_TAG = `<img src="${LOGO_IMG}" alt="${escapeHtml(brand)}" style="width:120px;height:120px;object-fit:contain;display:block;margin:0 auto">`;
   const ars = new Intl.NumberFormat('es-AR', {
     style: 'currency',
     currency: 'ARS',
@@ -118,43 +119,15 @@ app.get('/', (c) => {
   return c.html(
     page(
       { title: 'Inicio', brand, landing: true },
-      `<section class="hero">
-        <h1>La gestión de tu estación de servicio, en un solo lugar</h1>
-        <p class="lead">${escapeHtml(brand)} es la plataforma white-label para tu estación: catálogo propio, marca propia, órdenes con transferencia, puntos y desafíos, panel de operativa y administración.</p>
-        <div class="cta-row">
+      `<section class="home">
+        <div class="home-brand">
+          ${LOGO_IMG_TAG}
+        </div>
+        <p class="home-lead">La gestión de tu estación de servicio, en un solo lugar.</p>
+        <div class="home-cta">
           <a class="btn lg" href="/registro">Creá tu cuenta</a>
           <a class="btn secondary lg" href="/login">Accedé</a>
         </div>
-      </section>
-
-      <section id="incluye" class="section">
-        <h2>Qué incluye</h2>
-        <p class="lead">Todo lo que necesitás para administrar tu estación sin planillas ni sistemas sueltos.</p>
-        <div class="grid">
-      ${incluyeHtml}
-        </div>
-      </section>
-
-      <section id="precios" class="section">
-        <h2>Precios</h2>
-        <p class="lead">Planes mensuales en pesos, sin permanencia mínima. Cancelá cuando quieras.</p>
-        <div class="grid plans">
-      ${planesHtml}
-        </div>
-      </section>
-
-      <section id="contacto" class="section">
-        <h2>Contacto</h2>
-        <p class="lead">Dejanos tu consulta y te respondemos a la brevedad.</p>
-        <form class="contact" action="mailto:contacto@gasstation.app" method="post" enctype="text/plain">
-          <label for="nombre">Nombre</label>
-          <input id="nombre" name="nombre" type="text" required autocomplete="name">
-          <label for="email">Email</label>
-          <input id="email" name="email" type="email" required autocomplete="email">
-          <label for="mensaje">Mensaje</label>
-          <textarea id="mensaje" name="mensaje" rows="6" required></textarea>
-          <button type="submit">Enviar mensaje</button>
-        </form>
       </section>`,
     ),
   );

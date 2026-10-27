@@ -11,7 +11,7 @@
     {
       "binding": "DB",
       "database_name": "gas-station-db",
-      "database_id": "77eb09cf-d0c0-495b-af8a-c7e0107398ea",
+      "database_id": "d550427d-530a-40bb-8996-abc95655c0f2",
       "migrations_dir": "migrations"
     }
   ],

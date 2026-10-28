@@ -105,7 +105,9 @@ main.landing { max-width: 72rem; }
 /* --- Barra lateral (admin / store_manager) --- */
 .sidebar { position: fixed; top: 0; left: 0; width: 210px; height: 100vh;
   background: var(--sidebar-bg); border-right: 1px solid var(--sidebar-border);
-  padding-top: 4.2rem; padding-bottom: 1rem; overflow-y: auto; z-index: 50; }
+  padding-top: 4.2rem; padding-bottom: 1rem; overflow-y: auto; z-index: 50;
+  transform: translateX(-100%); transition: transform 0.25s ease; }
+.sidebar.open { transform: translateX(0); }
 .sidebar .sid-brand { padding: 0.75rem 1rem; font-weight: 800; font-size: 1.05rem;
   color: var(--fg); border-bottom: 1px solid var(--sidebar-border); margin-bottom: 0.5rem; }
 .sidebar .sid-user { padding: 0.75rem 1rem; font-size: 0.8rem; color: var(--muted);
@@ -118,10 +120,39 @@ main.landing { max-width: 72rem; }
 .sidebar .sid-foot { padding: 0.75rem 1rem; font-size: 0.75rem; color: var(--muted);
   border-top: 1px solid var(--sidebar-border); margin-top: 0.75rem; }
 
+.sidebar-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100vh;
+  background: rgba(0,0,0,0.3); z-index: 49; opacity: 0; visibility: hidden;
+  transition: opacity 0.25s ease; }
+.sidebar-overlay.open { opacity: 1; visibility: visible; }
+
+.hamburger { display: none; background: none; border: none; padding: 0.5rem;
+  cursor: pointer; color: var(--fg); }
+.hamburger svg { width: 24px; height: 24px; }
+
 .layout-user { display: flex; margin-top: 0; }
 .layout-user main { flex: 1; padding: 1rem 1.5rem; min-width: 0; }
 .layout-user .wrap { max-width: none; margin: 0; padding: 0; }
 .layout-user header.top .wrap { max-width: none; }
+
+@media (max-width: 768px) {
+  .hamburger { display: block; }
+  .sidebar { width: 260px; padding-top: 4.5rem; }
+  .sidebar-overlay.open { opacity: 1; visibility: visible; }
+  .layout-user main { padding: 1rem; }
+  header.top .wrap { padding: 0.75rem 1rem; }
+  .sidebar { transform: translateX(-100%); }
+  .sidebar.open { transform: translateX(0); }
+  main { margin-left: 0; }
+  .cta-row { flex-direction: column; width: 100%; }
+  .cta-row .btn { width: 100%; }
+  .grid { grid-template-columns: 1fr; }
+  .grid.plans { grid-template-columns: 1fr; }
+  table.papel { font-size: 0.8rem; }
+  table.papel th, table.papel td { padding: 0.4rem 0.5rem; }
+  .btn.lg { width: 100%; }
+  .home-cta { flex-direction: column; width: 100%; }
+  .home-cta .btn { width: 100%; }
+}
 
 /* --- Tablas tipo papel (formularios de estación) --- */
 table.papel { width: 100%; border-collapse: collapse; border: 2px solid var(--paper-border); }
@@ -175,10 +206,10 @@ function sidebarNav(user: { name: string; points: number; role: string }): strin
   const items: { href: string; label: string }[] = isAdmin
     ? [
         { href: '/app', label: 'Inicio' },
-        { href: '/usuarios', label: 'Usuarios' },
-        { href: '/tiendas', label: 'Tiendas' },
-        { href: '/desafios', label: 'Desafíos' },
-        { href: '/ordenes', label: 'Órdenes' },
+        { href: '/admin/usuarios', label: 'Usuarios' },
+        { href: '/admin/tiendas', label: 'Tiendas' },
+        { href: '/admin/desafios', label: 'Desafíos' },
+        { href: '/admin/ordenes', label: 'Órdenes' },
         { href: '/operativa', label: 'Operativa' },
         { href: '/ranking', label: 'Ranking' },
       ]
@@ -187,7 +218,7 @@ function sidebarNav(user: { name: string; points: number; role: string }): strin
           { href: '/app', label: 'Inicio' },
           { href: '/tienda', label: 'Mi tienda' },
           { href: '/operativa', label: 'Operativa' },
-          { href: '/ordenes', label: 'Órdenes' },
+          { href: '/admin/ordenes', label: 'Órdenes' },
           { href: '/ranking', label: 'Ranking' },
         ]
       : [
@@ -246,22 +277,38 @@ export function page(opts: PageOptions, body: string): string {
 
   if (opts.user && opts.user.role !== 'customer') {
     return head +
-      `<aside class="sidebar">
+      `<div class="sidebar-overlay" id="sidebarOverlay"></div>
+      <aside class="sidebar" id="sidebar">
         <div class="sid-brand"><img src="${LOGO_IMG}" alt="Gas Station" style="width:28px;height:28px;flex-shrink:0;display:block"><span style="margin-left:0.25rem;font-size:0.9rem">${esc(brand)}</span></div>
         <div class="sid-user">${esc(opts.user.name)} · ${esc(opts.user.role)}</div>
         ${sidebarLinks(opts.user)}
         <div class="sep"></div>
         <div class="sid-foot"><form method="post" action="/logout" style="margin:0"><button class="btn secondary" style="width:100%;padding:0.5rem 0.7rem;font-size:0.85rem">Cerrar sesión</button></form></div>
       </aside>
-      <main style="margin-left:210px;padding:1rem 1.5rem;min-width:0;">
+      <main style="margin-left:0;padding:1rem 1.5rem;min-width:0;">
         <header class="top"><div class="wrap" style="max-width:none;">
+          <button class="hamburger" id="hamburger" aria-label="Menú" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg></button>
           <a class="brand" href="/"><img src="${LOGO_IMG}" alt="Gas Station" style="width:28px;height:28px;flex-shrink:0;display:block"><span>${esc(brand)}</span></a>
           <span class="muted" style="font-size:0.85rem">${esc(opts.user.name)}</span>
         </div></header>
         ${alerts}
         ${body}
         ${footer}
-      </main>` +
+      </main>
+      <script>
+        (function(){
+          const sidebar = document.getElementById('sidebar');
+          const overlay = document.getElementById('sidebarOverlay');
+          const hamburger = document.getElementById('hamburger');
+          if (!sidebar || !overlay || !hamburger) return;
+          function open(){ sidebar.classList.add('open'); overlay.classList.add('open'); hamburger.setAttribute('aria-expanded','true'); document.body.style.overflow='hidden'; }
+          function close(){ sidebar.classList.remove('open'); overlay.classList.remove('open'); hamburger.setAttribute('aria-expanded','false'); document.body.style.overflow=''; }
+          hamburger.addEventListener('click', function(){ sidebar.classList.contains('open') ? close() : open(); });
+          overlay.addEventListener('click', close);
+          document.addEventListener('keydown', function(e){ if(e.key==='Escape') close(); });
+          document.querySelectorAll('.sidebar a[href]').forEach(function(a){ a.addEventListener('click', close); });
+        })();
+      </script>` +
       `</body></html>`;
   }
 
@@ -325,10 +372,10 @@ function sidebarLinks(user: { name: string; points: number; role: string }): str
   const items: { href: string; label: string }[] = isAdmin
     ? [
         { href: '/app', label: 'Inicio' },
-        { href: '/usuarios', label: 'Usuarios' },
-        { href: '/tiendas', label: 'Tiendas' },
-        { href: '/desafios', label: 'Desafíos' },
-        { href: '/ordenes', label: 'Órdenes' },
+        { href: '/admin/usuarios', label: 'Usuarios' },
+        { href: '/admin/tiendas', label: 'Tiendas' },
+        { href: '/admin/desafios', label: 'Desafíos' },
+        { href: '/admin/ordenes', label: 'Órdenes' },
         { href: '/operativa', label: 'Operativa' },
         { href: '/ranking', label: 'Ranking' },
       ]
@@ -337,7 +384,7 @@ function sidebarLinks(user: { name: string; points: number; role: string }): str
           { href: '/app', label: 'Inicio' },
           { href: '/tienda', label: 'Mi tienda' },
           { href: '/operativa', label: 'Operativa' },
-          { href: '/ordenes', label: 'Órdenes' },
+          { href: '/admin/ordenes', label: 'Órdenes' },
           { href: '/ranking', label: 'Ranking' },
         ]
       : [];

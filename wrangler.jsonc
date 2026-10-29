@@ -25,7 +25,7 @@
     "crons": ["*/5 * * * *"]
   },
   "vars": {
-    "BRAND_NAME": "Gas Station",
+    "BRAND_NAME": "LESCO GNC",
     "PBKDF2_ITERATIONS": "30000"
   }
 }

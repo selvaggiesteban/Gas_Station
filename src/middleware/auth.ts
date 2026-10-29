@@ -9,7 +9,7 @@ export function dbOf(c: Context<AppEnv>): Db {
 }
 
 export function brandOf(c: Context<AppEnv>): string {
-  return c.env.BRAND_NAME || 'Gas Station';
+  return c.env.BRAND_NAME || 'LESCO GNC';
 }
 
 export const attachUser: MiddlewareHandler<AppEnv> = async (c, next) => {

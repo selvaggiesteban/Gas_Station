@@ -105,7 +105,7 @@ main.landing { max-width: 72rem; }
 /* --- Barra lateral (admin / store_manager) --- */
 .sidebar { position: fixed; top: 0; left: 0; width: 210px; height: 100vh;
   background: var(--sidebar-bg); border-right: 1px solid var(--sidebar-border);
-  padding-top: 4.2rem; padding-bottom: 1rem; overflow-y: auto; z-index: 50;
+  padding-top: 1rem; padding-bottom: 1rem; overflow-y: auto; z-index: 50;
   transition: transform 0.25s ease; }
 @media (max-width: 768px) {
   .sidebar { transform: translateX(-100%); }
@@ -113,6 +113,7 @@ main.landing { max-width: 72rem; }
 }
 .sidebar .sid-brand { padding: 0.75rem 1rem; font-weight: 800; font-size: 1.05rem;
   color: var(--fg); border-bottom: 1px solid var(--sidebar-border); margin-bottom: 0.5rem; }
+.sidebar a.sid-brand:hover { background: transparent; }
 .sidebar .sid-user { padding: 0.75rem 1rem; font-size: 0.8rem; color: var(--muted);
   border-bottom: 1px solid var(--sidebar-border); margin-bottom: 0.75rem; }
 .sidebar a { display: block; padding: 0.6rem 1rem; color: var(--fg); text-decoration: none;
@@ -128,20 +129,18 @@ main.landing { max-width: 72rem; }
   transition: opacity 0.25s ease; }
 .sidebar-overlay.open { opacity: 1; visibility: visible; }
 
-.hamburger { display: none; background: none; border: none; padding: 0.5rem;
-  cursor: pointer; color: var(--fg); }
+.hamburger { display: none; position: fixed; top: 0.6rem; left: 0.75rem; z-index: 45;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 0.5rem;
+  padding: 0.45rem; cursor: pointer; color: var(--fg); }
 .hamburger svg { width: 24px; height: 24px; }
 
-.layout-user { display: flex; margin-top: 0; }
-.layout-user main { flex: 1; padding: 1rem 1.5rem; min-width: 0; }
-.layout-user .wrap { max-width: none; margin: 0; padding: 0; }
-.layout-user header.top .wrap { max-width: none; }
+.layout-sidebar { margin-left: 210px; padding: 1rem 1.5rem; min-width: 0; }
 
 @media (max-width: 768px) {
   .hamburger { display: block; }
-  .sidebar { width: 260px; padding-top: 4.5rem; }
+  .sidebar { width: 260px; }
   .sidebar-overlay.open { opacity: 1; visibility: visible; }
-  .layout-user main { padding: 1rem; }
+  .layout-sidebar { margin-left: 0; padding: 3.5rem 1rem 1rem; }
   header.top .wrap { padding: 0.75rem 1rem; }
   main { margin-left: 0; }
   .cta-row { flex-direction: column; width: 100%; }
@@ -279,19 +278,15 @@ export function page(opts: PageOptions, body: string): string {
   if (opts.user && opts.user.role !== 'customer') {
     return head +
       `<div class="sidebar-overlay" id="sidebarOverlay"></div>
+      <button class="hamburger" id="hamburger" aria-label="Menú" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg></button>
       <aside class="sidebar" id="sidebar">
-        <div class="sid-brand"><img src="${LOGO_IMG}" alt="LESCO GNC" style="width:36px;height:36px;flex-shrink:0;display:block"><span style="margin-left:0.25rem;font-size:0.9rem">${esc(brand)}</span></div>
+        <a class="sid-brand" href="/"><img src="${LOGO_IMG}" alt="${esc(brand)}" style="width:36px;height:36px;flex-shrink:0;display:block"><span style="margin-left:0.25rem;font-size:0.9rem">${esc(brand)}</span></a>
         <div class="sid-user">${esc(opts.user.name)} · ${esc(opts.user.role)}</div>
         ${sidebarLinks(opts.user)}
         <div class="sep"></div>
         <div class="sid-foot"><form method="post" action="/logout" style="margin:0"><button class="btn secondary" style="width:100%;padding:0.5rem 0.7rem;font-size:0.85rem">Cerrar sesión</button></form></div>
       </aside>
-      <main style="margin-left:210px;padding:1rem 1.5rem;min-width:0;">
-        <header class="top"><div class="wrap" style="max-width:none;">
-          <button class="hamburger" id="hamburger" aria-label="Menú" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg></button>
-          <a class="brand" href="/"><img src="${LOGO_IMG}" alt="LESCO GNC" style="width:36px;height:36px;flex-shrink:0;display:block"><span>${esc(brand)}</span></a>
-          <span class="muted" style="font-size:0.85rem">${esc(opts.user.name)}</span>
-        </div></header>
+      <main class="layout-sidebar">
         ${alerts}
         ${body}
         ${footer}

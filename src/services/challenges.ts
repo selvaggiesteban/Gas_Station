@@ -47,6 +47,7 @@ export async function computeProgress(
   user: ProgressUser,
   challenge: Challenge,
 ): Promise<number> {
+  if (user.role === 'admin') return 0;
   const startsAt = challenge.startsAt;
   const endsAt = challenge.endsAt;
 
@@ -103,7 +104,9 @@ export async function joinChallenge(
   db: Db,
   userId: number,
   challengeId: number,
+  userRole: string,
 ): Promise<JoinResult> {
+  if (userRole === 'admin') return 'inactive';
   const rows = await db
     .select()
     .from(weeklyChallenges)
@@ -144,6 +147,7 @@ export async function refreshUserChallenges(
   db: Db,
   user: ProgressUser,
 ): Promise<void> {
+  if (user.role === 'admin') return;
   const now = new Date();
   const active = await db
     .select()

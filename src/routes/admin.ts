@@ -4,6 +4,7 @@ import { and, count, desc, eq, like, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { AppEnv } from '../env';
+import type { Db } from '../db';
 import { dbOf, brandOf, requireRole } from '../middleware/auth';
 import { page, escapeHtml } from '../lib/html';
 import {
@@ -18,7 +19,7 @@ import {
   users,
   weeklyChallenges,
 } from '../db/schema';
-import { approveOrder, mimeFromKey, rejectOrder } from '../services/orders';
+import { approveOrder, mimeFromKey, rejectOrder, ensureDefaultStore } from '../services/orders';
 
 type Role = (typeof ROLE_VALUES)[number];
 type GoalType = (typeof GOAL_TYPE_VALUES)[number];
@@ -26,7 +27,6 @@ type OrderStatus = (typeof ORDER_STATUS_VALUES)[number];
 
 const ROLE_LABELS: Record<Role, string> = {
   admin: 'Admin',
-  content_manager: 'Contenido',
   store_manager: 'Gestor de tienda',
   customer: 'Cliente',
 };
@@ -367,197 +367,21 @@ adminRoutes.post('/admin/usuarios/:id/activo', async (c) => {
   return c.redirect(avisado('/admin/usuarios'));
 });
 
-// ----------------------------------------------------------------- tiendas
+// --------------------------------------------------------------- tienda única
 
-adminRoutes.get('/admin/tiendas', async (c) => {
-  const db = dbOf(c);
+async function singleStore(db: Db) {
+  const id = await ensureDefaultStore(db);
   const rows = await db
-    .select({
-      id: stores.id,
-      name: stores.name,
-      zone: stores.zone,
-      active: stores.active,
-      managers: sql<number>`count(${storeUser.userId})`,
-    })
-    .from(stores)
-    .leftJoin(storeUser, eq(storeUser.storeId, stores.id))
-    .groupBy(stores.id)
-    .orderBy(stores.name);
-
-  const bodyRows = rows
-    .map(
-      (s) => `<tr>
-      <td style="${TD}">${escapeHtml(s.name)}</td>
-      <td style="${TD}">${s.zone ? escapeHtml(s.zone) : '<span class="muted">—</span>'}</td>
-      <td style="${TD}">${s.active ? 'Sí' : 'No'}</td>
-      <td style="${TD}">${s.managers}</td>
-      <td style="${TD}">
-        <a class="btn secondary" href="/admin/tiendas/${s.id}" style="${SMALL_BTN}">Detalle</a>
-        <form method="post" action="/admin/tiendas/${s.id}/activo" style="display:inline">
-          <input type="hidden" name="active" value="${s.active ? '0' : '1'}">
-          <button type="submit" class="secondary" style="${SMALL_BTN}">${s.active ? 'Desactivá' : 'Activá'}</button>
-        </form>
-        <details style="display:inline;margin-left:0.5rem">
-          <summary style="display:inline;cursor:pointer;font-size:0.85rem">Editá</summary>
-          <form method="post" action="/admin/tiendas/${s.id}/editar" style="margin-top:0.5rem;min-width:14rem">
-            <label for="name-${s.id}">Nombre</label>
-            <input id="name-${s.id}" name="name" type="text" required value="${escapeHtml(s.name)}">
-            <label for="zone-${s.id}">Zona (opcional)</label>
-            <input id="zone-${s.id}" name="zone" type="text" value="${escapeHtml(s.zone ?? '')}">
-            <button type="submit" style="${SMALL_BTN}">Guardá</button>
-          </form>
-        </details>
-      </td>
-    </tr>`,
-    )
-    .join('');
-
-  return c.html(
-    page(
-      {
-        title: 'Tiendas',
-        brand: brandOf(c),
-        user: c.get('user'),
-        notice: avisoDe(c),
-      },
-      `<div class="card">
-        <h1>Tiendas</h1>
-        ${adminNav('tiendas')}
-        <table class="papel"">
-          <thead><tr>
-            <th style="${TH}">Nombre</th>
-            <th style="${TH}">Zona</th>
-            <th style="${TH}">Activa</th>
-            <th style="${TH}">Gestores</th>
-            <th style="${TH}">Acciones</th>
-          </tr></thead>
-          <tbody>${bodyRows || `<tr><td colspan="5" style="${TD}" class="muted">Todavía no hay tiendas. Creá la primera acá abajo.</td></tr>`}</tbody>
-        </table>
-      </div>
-      <div class="card">
-        <h2>Creá una tienda</h2>
-        <form method="post" action="/admin/tiendas">
-          <label for="new-name">Nombre (único)</label>
-          <input id="new-name" name="name" type="text" required>
-          <label for="new-zone">Zona (opcional)</label>
-          <input id="new-zone" name="zone" type="text">
-          <button type="submit">Creá tienda</button>
-        </form>
-      </div>`,
-    ),
-  );
-});
-
-adminRoutes.post('/admin/tiendas', async (c) => {
-  const body = await c.req.parseBody();
-  const name = str(body.name);
-  const zone = str(body.zone) || null;
-  if (!name) {
-    return render(c, 'Tiendas', notFoundBody('/admin/tiendas'), {
-      error: 'Ingresá el nombre de la tienda.',
-    });
-  }
-  const db = dbOf(c);
-  const existing = await db
-    .select({ id: stores.id })
-    .from(stores)
-    .where(eq(stores.name, name))
-    .limit(1);
-  if (existing[0]) {
-    return render(c, 'Tiendas', notFoundBody('/admin/tiendas'), {
-      error: 'Ya existe una tienda con ese nombre.',
-    });
-  }
-  await db.insert(stores).values({ name, zone, active: true });
-  return c.redirect(avisado('/admin/tiendas'));
-});
-
-adminRoutes.post('/admin/tiendas/:id/editar', async (c) => {
-  const id = parseIdParam(c.req.param('id'));
-  if (!id) {
-    return render(c, 'Tiendas', notFoundBody('/admin/tiendas'), {
-      status: 404,
-    });
-  }
-  const body = await c.req.parseBody();
-  const name = str(body.name);
-  const zone = str(body.zone) || null;
-  if (!name) {
-    return render(c, 'Tiendas', notFoundBody('/admin/tiendas'), {
-      error: 'Ingresá el nombre de la tienda.',
-    });
-  }
-  const db = dbOf(c);
-  const existing = await db
-    .select({ id: stores.id })
-    .from(stores)
-    .where(eq(stores.name, name))
-    .limit(1);
-  if (existing[0] && existing[0].id !== id) {
-    return render(c, 'Tiendas', notFoundBody('/admin/tiendas'), {
-      error: 'Ya existe una tienda con ese nombre.',
-    });
-  }
-  const updated = await db
-    .update(stores)
-    .set({ name, zone, updatedAt: new Date() })
-    .where(eq(stores.id, id))
-    .returning({ id: stores.id });
-  if (!updated[0]) {
-    return render(c, 'Tiendas', notFoundBody('/admin/tiendas'), {
-      status: 404,
-    });
-  }
-  return c.redirect(avisado('/admin/tiendas'));
-});
-
-adminRoutes.post('/admin/tiendas/:id/activo', async (c) => {
-  const id = parseIdParam(c.req.param('id'));
-  if (!id) {
-    return render(c, 'Tiendas', notFoundBody('/admin/tiendas'), {
-      status: 404,
-    });
-  }
-  const body = await c.req.parseBody();
-  const active = parseActivo(body.active);
-  if (active === null) {
-    return render(c, 'Tiendas', notFoundBody('/admin/tiendas'), {
-      error: "Enviá active = '1' para activar o '0' para desactivar.",
-    });
-  }
-  const db = dbOf(c);
-  const updated = await db
-    .update(stores)
-    .set({ active, updatedAt: new Date() })
-    .where(eq(stores.id, id))
-    .returning({ id: stores.id });
-  if (!updated[0]) {
-    return render(c, 'Tiendas', notFoundBody('/admin/tiendas'), {
-      status: 404,
-    });
-  }
-  return c.redirect(avisado('/admin/tiendas'));
-});
-
-adminRoutes.get('/admin/tiendas/:id', async (c) => {
-  const id = parseIdParam(c.req.param('id'));
-  if (!id) {
-    return render(c, 'Tiendas', notFoundBody('/admin/tiendas'), {
-      status: 404,
-    });
-  }
-  const db = dbOf(c);
-  const storeRows = await db
     .select()
     .from(stores)
     .where(eq(stores.id, id))
     .limit(1);
-  const store = storeRows[0];
-  if (!store) {
-    return render(c, 'Tiendas', notFoundBody('/admin/tiendas'), {
-      status: 404,
-    });
-  }
+  return rows[0]!;
+}
+
+adminRoutes.get('/admin/tiendas', async (c) => {
+  const db = dbOf(c);
+  const store = await singleStore(db);
 
   const gestores = await db
     .select({
@@ -567,7 +391,7 @@ adminRoutes.get('/admin/tiendas/:id', async (c) => {
     })
     .from(storeUser)
     .innerJoin(users, eq(storeUser.userId, users.id))
-    .where(eq(storeUser.storeId, id))
+    .where(eq(storeUser.storeId, store.id))
     .orderBy(users.name);
 
   const asignados = gestores.map((g) => g.userId);
@@ -591,7 +415,7 @@ adminRoutes.get('/admin/tiendas/:id', async (c) => {
       <td style="${TD}">${escapeHtml(g.name)}</td>
       <td style="${TD}">${escapeHtml(g.email)}</td>
       <td style="${TD}">
-        <form method="post" action="/admin/tiendas/${id}/gestores/quitar" style="display:inline">
+        <form method="post" action="/admin/tiendas/gestores/quitar" style="display:inline">
           <input type="hidden" name="userId" value="${g.userId}">
           <button type="submit" class="secondary" style="${SMALL_BTN}">Quitá gestor</button>
         </form>
@@ -603,16 +427,22 @@ adminRoutes.get('/admin/tiendas/:id', async (c) => {
   return c.html(
     page(
       {
-        title: `Tienda: ${store.name}`,
+        title: 'Tienda',
         brand: brandOf(c),
         user: c.get('user'),
         notice: avisoDe(c),
       },
       `<div class="card">
-        <h1>${escapeHtml(store.name)}</h1>
+        <h1>Tienda</h1>
         ${adminNav('tiendas')}
-        <p class="muted">Zona: ${store.zone ? escapeHtml(store.zone) : 'sin zona'} · Activa: ${store.active ? 'sí' : 'no'}</p>
-        <a class="btn secondary" href="/admin/tiendas">Volver a tiendas</a>
+        <p class="muted">La estación opera con una única tienda. Editá su nombre y zona acá abajo.</p>
+        <form method="post" action="/admin/tiendas/editar">
+          <label for="store-name">Nombre</label>
+          <input id="store-name" name="name" type="text" required value="${escapeHtml(store.name)}">
+          <label for="store-zone">Zona (opcional)</label>
+          <input id="store-zone" name="zone" type="text" value="${escapeHtml(store.zone ?? '')}">
+          <button type="submit">Guardá</button>
+        </form>
       </div>
       <div class="card">
         <h2>Gestores asignados</h2>
@@ -622,12 +452,12 @@ adminRoutes.get('/admin/tiendas/:id', async (c) => {
             <th style="${TH}">Email</th>
             <th style="${TH}">Acciones</th>
           </tr></thead>
-          <tbody>${filasGestores || `<tr><td colspan="3" style="${TD}" class="muted">Esta tienda todavía no tiene gestores.</td></tr>`}</tbody>
+          <tbody>${filasGestores || `<tr><td colspan="3" style="${TD}" class="muted">Todavía no hay gestores asignados.</td></tr>`}</tbody>
         </table>
         <h2 style="margin-top:1rem">Asigná gestor</h2>
         ${
           disponibles.length
-            ? `<form method="post" action="/admin/tiendas/${id}/gestores">
+            ? `<form method="post" action="/admin/tiendas/gestores">
           <label for="userId">Usuario con rol gestor de tienda</label>
           <select id="userId" name="userId" required>${opcionesGestor}</select>
           <button type="submit">Asigná gestor</button>
@@ -639,80 +469,78 @@ adminRoutes.get('/admin/tiendas/:id', async (c) => {
   );
 });
 
-adminRoutes.post('/admin/tiendas/:id/gestores', async (c) => {
-  const id = parseIdParam(c.req.param('id'));
-  if (!id) {
-    return render(c, 'Tiendas', notFoundBody('/admin/tiendas'), {
-      status: 404,
+adminRoutes.post('/admin/tiendas/editar', async (c) => {
+  const body = await c.req.parseBody();
+  const name = str(body.name);
+  const zone = str(body.zone) || null;
+  if (!name) {
+    return render(c, 'Tienda', notFoundBody('/admin/tiendas'), {
+      error: 'Ingresá el nombre de la tienda.',
     });
   }
-  const volver = `/admin/tiendas/${id}`;
+  const db = dbOf(c);
+  const store = await singleStore(db);
+  await db
+    .update(stores)
+    .set({ name, zone, updatedAt: new Date() })
+    .where(eq(stores.id, store.id));
+  return c.redirect(avisado('/admin/tiendas'));
+});
+
+adminRoutes.post('/admin/tiendas/gestores', async (c) => {
+  const volver = '/admin/tiendas';
   const body = await c.req.parseBody();
   const userId = Number(str(body.userId));
   if (!Number.isInteger(userId) || userId <= 0) {
-    return render(c, 'Tiendas', notFoundBody(volver), {
+    return render(c, 'Tienda', notFoundBody(volver), {
       error: 'Seleccioná un gestor válido.',
     });
   }
   const db = dbOf(c);
-  const storeRows = await db
-    .select({ id: stores.id })
-    .from(stores)
-    .where(eq(stores.id, id))
-    .limit(1);
-  if (!storeRows[0]) {
-    return render(c, 'Tiendas', notFoundBody('/admin/tiendas'), {
-      status: 404,
-    });
-  }
+  const store = await singleStore(db);
   const userRows = await db
     .select({ id: users.id, role: users.role })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
   if (!userRows[0]) {
-    return render(c, 'Tiendas', notFoundBody(volver), {
+    return render(c, 'Tienda', notFoundBody(volver), {
       error: 'No existe ese usuario.',
     });
   }
   if (userRows[0].role !== 'store_manager') {
-    return render(c, 'Tiendas', notFoundBody(volver), {
+    return render(c, 'Tienda', notFoundBody(volver), {
       error: 'Ese usuario no tiene el rol de gestor de tienda.',
     });
   }
   const yaAsignado = await db
     .select({ userId: storeUser.userId })
     .from(storeUser)
-    .where(and(eq(storeUser.storeId, id), eq(storeUser.userId, userId)))
+    .where(and(eq(storeUser.storeId, store.id), eq(storeUser.userId, userId)))
     .limit(1);
   if (yaAsignado[0]) {
-    return render(c, 'Tiendas', notFoundBody(volver), {
-      error: 'Ese gestor ya está asignado a esta tienda.',
+    return render(c, 'Tienda', notFoundBody(volver), {
+      error: 'Ese gestor ya está asignado a la tienda.',
     });
   }
-  await db.insert(storeUser).values({ storeId: id, userId });
+  await db.insert(storeUser).values({ storeId: store.id, userId });
   return c.redirect(avisado(volver));
 });
 
-adminRoutes.post('/admin/tiendas/:id/gestores/quitar', async (c) => {
-  const id = parseIdParam(c.req.param('id'));
-  if (!id) {
-    return render(c, 'Tiendas', notFoundBody('/admin/tiendas'), {
-      status: 404,
-    });
-  }
+adminRoutes.post('/admin/tiendas/gestores/quitar', async (c) => {
   const body = await c.req.parseBody();
   const userId = Number(str(body.userId));
   if (!Number.isInteger(userId) || userId <= 0) {
-    return render(c, 'Tiendas', notFoundBody(`/admin/tiendas/${id}`), {
+    return render(c, 'Tienda', notFoundBody('/admin/tiendas'), {
       error: 'Seleccioná un gestor válido.',
     });
   }
   const db = dbOf(c);
+  const store = await singleStore(db);
   await db
     .delete(storeUser)
-    .where(and(eq(storeUser.storeId, id), eq(storeUser.userId, userId)));
-  return c.redirect(avisado(`/admin/tiendas/${id}`));
+    .where(and(eq(storeUser.storeId, store.id), eq(storeUser.userId, userId)));
+  return c.redirect(avisado('/admin/tiendas'));
 });
 
 // ---------------------------------------------------------------- desafíos

@@ -113,25 +113,34 @@ describe('admin panel', () => {
     expect(after?.role).toBe('store_manager');
   });
 
-  it('crea tienda y asigna un gestor', async () => {
+  it('edita la tienda única y asigna un gestor', async () => {
     const { cookie } = await registerAs('Admin Tiendas', uniqueEmail('admin-tiendas'), 'admin');
-    const tienda = `YPF Centro ${Date.now()}-${seq++}`;
-    const creada = await post(
-      '/admin/tiendas',
+
+    // La página de tiendas crea la única tienda si no existe todavía.
+    const indice = await get('/admin/tiendas', cookie);
+    expect(indice.status).toBe(200);
+
+    const store = await env.DB.prepare(
+      'select id from stores order by id asc limit 1',
+    ).first<{ id: number }>();
+    expect(store).toBeTruthy();
+
+    const tienda = `LESCO GNC Única ${Date.now()}-${seq++}`;
+    const editada = await post(
+      '/admin/tiendas/editar',
       { name: tienda, zone: 'Norte' },
       cookie,
     );
-    expect(creada.status).toBe(302);
-    expect(creada.headers.get('location')).toBe('/admin/tiendas?aviso=ok');
+    expect(editada.status).toBe(302);
+    expect(editada.headers.get('location')).toBe('/admin/tiendas?aviso=ok');
 
-    const store = await env.DB.prepare(
-      'select id, zone, active from stores where name = ?',
+    const after = await env.DB.prepare(
+      'select name, zone from stores where id = ?',
     )
-      .bind(tienda)
-      .first<{ id: number; zone: string | null; active: number }>();
-    expect(store).toBeTruthy();
-    expect(store!.zone).toBe('Norte');
-    expect(store!.active).toBe(1);
+      .bind(store!.id)
+      .first<{ name: string; zone: string | null }>();
+    expect(after?.name).toBe(tienda);
+    expect(after?.zone).toBe('Norte');
 
     const gestorEmail = uniqueEmail('gestor');
     await register('Gestor Uno', gestorEmail);
@@ -143,14 +152,12 @@ describe('admin panel', () => {
       .first<{ id: number }>();
 
     const asignado = await post(
-      `/admin/tiendas/${store!.id}/gestores`,
+      '/admin/tiendas/gestores',
       { userId: String(gestor!.id) },
       cookie,
     );
     expect(asignado.status).toBe(302);
-    expect(asignado.headers.get('location')).toBe(
-      `/admin/tiendas/${store!.id}?aviso=ok`,
-    );
+    expect(asignado.headers.get('location')).toBe('/admin/tiendas?aviso=ok');
 
     const link = await env.DB.prepare(
       'select user_id from store_user where store_id = ? and user_id = ?',

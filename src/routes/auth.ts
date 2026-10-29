@@ -128,7 +128,9 @@ authRoutes.post('/login', async (c) => {
     userAgent: c.req.header('user-agent') ?? null,
   });
   setSessionCookie(c, token);
-  await awardLoginPoints(db, user);
+  if (user.role !== 'admin') {
+    await awardLoginPoints(db, user);
+  }
   return c.redirect('/app');
 });
 

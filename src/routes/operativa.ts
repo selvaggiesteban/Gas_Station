@@ -18,7 +18,6 @@ import {
   shiftReportReadings,
   shiftReports,
   stores,
-  storeUser,
 } from '../db/schema';
 import { ensureDefaultStore } from '../services/orders';
 
@@ -235,74 +234,26 @@ function notFound(c: Context<AppEnv>, title: string, back: string): Response {
 type StoreResult = { storeId: number } | { error: string };
 
 async function resolveStore(
-  c: Context<AppEnv>,
+  _c: Context<AppEnv>,
   db: Db,
-  raw: unknown,
+  _raw: unknown,
 ): Promise<StoreResult> {
-  const user = c.get('user')!;
-  const wanted = idFrom(raw);
-  if (user.role === 'store_manager') {
-    const assigned = await db
-      .select({ id: storeUser.storeId })
-      .from(storeUser)
-      .where(eq(storeUser.userId, user.id))
-      .orderBy(asc(storeUser.storeId));
-    const ids = assigned.map((a) => a.id);
-    if (wanted !== null) {
-      if (!ids.includes(wanted)) {
-        return { error: 'No tenés permiso sobre esa tienda.' };
-      }
-      return { storeId: wanted };
-    }
-    const first = ids[0];
-    if (first !== undefined) return { storeId: first };
-    return { storeId: await ensureDefaultStore(db) };
-  }
-  if (wanted !== null) {
-    const rows = await db
-      .select({ id: stores.id })
-      .from(stores)
-      .where(eq(stores.id, wanted))
-      .limit(1);
-    if (!rows[0]) return { error: 'No existe esa tienda.' };
-    return { storeId: wanted };
-  }
   return { storeId: await ensureDefaultStore(db) };
 }
 
 async function canManageStore(
-  db: Db,
+  _db: Db,
   user: SessionUser,
-  storeId: number,
+  _storeId: number,
 ): Promise<boolean> {
-  if (user.role === 'admin') return true;
-  const rows = await db
-    .select({ owner: storeUser.userId })
-    .from(storeUser)
-    .where(and(eq(storeUser.storeId, storeId), eq(storeUser.userId, user.id)))
-    .limit(1);
-  return rows.length > 0;
+  return user.role === 'admin' || user.role === 'store_manager';
 }
 
-async function storeOptions(
-  db: Db,
-  user: SessionUser,
-  selected: number,
-): Promise<string> {
-  let rows: { id: number; name: string }[];
-  if (user.role === 'admin') {
-    rows = await db
-      .select({ id: stores.id, name: stores.name })
-      .from(stores)
-      .orderBy(asc(stores.name));
-  } else {
-    rows = await db
-      .select({ id: stores.id, name: stores.name })
-      .from(stores)
-      .innerJoin(storeUser, eq(storeUser.storeId, stores.id))
-      .where(eq(storeUser.userId, user.id))
-      .orderBy(asc(stores.name));
-  }
+async function storeOptions(db: Db, selected: number): Promise<string> {
+  const rows = await db
+    .select({ id: stores.id, name: stores.name })
+    .from(stores)
+    .orderBy(asc(stores.name));
   return rows
     .map(
       (s) =>
@@ -531,7 +482,7 @@ operativaRoutes.get('/operativa/caja', async (c) => {
     })
     .join('');
 
-  const storesHtml = await storeOptions(db, user, access.storeId);
+  const storesHtml = await storeOptions(db, access.storeId);
 
   return render(
     c,
@@ -609,7 +560,7 @@ operativaRoutes.get('/operativa/sorteo', async (c) => {
     )
     .join('');
 
-  const storesHtml = await storeOptions(db, user, access.storeId);
+  const storesHtml = await storeOptions(db, access.storeId);
   const ganadores = rows.filter((r) => r.winning).length;
 
   return render(
@@ -641,7 +592,7 @@ operativaRoutes.get('/operativa/sorteo/nuevo', async (c) => {
   const user = c.get('user')!;
   const access = await resolveStore(c, db, c.req.query('tienda'));
   if ('error' in access) return denied(c, access.error);
-  const storesHtml = await storeOptions(db, user, access.storeId);
+  const storesHtml = await storeOptions(db, access.storeId);
   return render(
     c,
     'Emitir cupones',
@@ -806,7 +757,7 @@ operativaRoutes.get('/operativa/caja/nuevo', async (c) => {
   const user = c.get('user')!;
   const access = await resolveStore(c, db, c.req.query('tienda'));
   if ('error' in access) return denied(c, access.error);
-  const storesHtml = await storeOptions(db, user, access.storeId);
+  const storesHtml = await storeOptions(db, access.storeId);
   return render(
     c,
     'Nueva caja',
@@ -1001,7 +952,7 @@ operativaRoutes.get('/operativa/ventas', async (c) => {
     )
     .join('');
 
-  const storesHtml = await storeOptions(db, user, access.storeId);
+  const storesHtml = await storeOptions(db, access.storeId);
 
   return render(
     c,
@@ -1034,7 +985,7 @@ operativaRoutes.get('/operativa/ventas/nuevo', async (c) => {
   const user = c.get('user')!;
   const access = await resolveStore(c, db, c.req.query('tienda'));
   if ('error' in access) return denied(c, access.error);
-  const storesHtml = await storeOptions(db, user, access.storeId);
+  const storesHtml = await storeOptions(db, access.storeId);
   return render(
     c,
     'Nuevo resumen de ventas',
@@ -1270,7 +1221,7 @@ operativaRoutes.get('/operativa/actividades', async (c) => {
     )
     .join('');
 
-  const storesHtml = await storeOptions(db, user, access.storeId);
+  const storesHtml = await storeOptions(db, access.storeId);
 
   return render(
     c,
@@ -1303,7 +1254,7 @@ operativaRoutes.get('/operativa/actividades/nuevo', async (c) => {
   const user = c.get('user')!;
   const access = await resolveStore(c, db, c.req.query('tienda'));
   if ('error' in access) return denied(c, access.error);
-  const storesHtml = await storeOptions(db, user, access.storeId);
+  const storesHtml = await storeOptions(db, access.storeId);
   return render(
     c,
     'Nueva actividad',
@@ -1496,7 +1447,7 @@ operativaRoutes.get('/operativa/lubricantes', async (c) => {
     )
     .join('');
 
-  const storesHtml = await storeOptions(db, user, access.storeId);
+  const storesHtml = await storeOptions(db, access.storeId);
 
   return render(
     c,
@@ -1531,7 +1482,7 @@ operativaRoutes.get('/operativa/lubricantes/nuevo', async (c) => {
   const user = c.get('user')!;
   const access = await resolveStore(c, db, c.req.query('tienda'));
   if ('error' in access) return denied(c, access.error);
-  const storesHtml = await storeOptions(db, user, access.storeId);
+  const storesHtml = await storeOptions(db, access.storeId);
   const catalog = await db
     .select({ id: products.id, name: products.name })
     .from(products)
@@ -1967,7 +1918,7 @@ operativaRoutes.get('/operativa/rendicion', async (c) => {
     )
     .join('');
 
-  const storesHtml = await storeOptions(db, user, access.storeId);
+  const storesHtml = await storeOptions(db, access.storeId);
 
   return render(
     c,
@@ -1999,7 +1950,7 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
   const user = c.get('user')!;
   const access = await resolveStore(c, db, c.req.query('tienda'));
   if ('error' in access) return denied(c, access.error);
-  const storesHtml = await storeOptions(db, user, access.storeId);
+  const storesHtml = await storeOptions(db, access.storeId);
   return render(
     c,
     'Nueva rendición de turno',

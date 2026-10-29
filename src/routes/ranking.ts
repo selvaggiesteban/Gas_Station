@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { AppEnv } from '../env';
 import { dbOf, brandOf, requireAuth } from '../middleware/auth';
 import { page, escapeHtml } from '../lib/html';
@@ -25,11 +25,11 @@ function parseRol(v: string | undefined): RolFilter {
 function rolCondition(rol: RolFilter) {
   if (rol === 'clientes') return eq(users.role, 'customer');
   if (rol === 'gestores') return eq(users.role, 'store_manager');
-  return undefined;
+  return inArray(users.role, ['customer', 'store_manager']);
 }
 
 function inSegment(rol: RolFilter, role: string): boolean {
-  if (rol === 'todos') return true;
+  if (rol === 'todos') return role !== 'admin';
   if (rol === 'clientes') return role === 'customer';
   return role === 'store_manager';
 }
@@ -38,8 +38,6 @@ function roleLabel(role: string): string {
   switch (role) {
     case 'admin':
       return 'Admin';
-    case 'content_manager':
-      return 'Contenido';
     case 'store_manager':
       return 'Gestor';
     case 'customer':
@@ -88,10 +86,12 @@ rankingRoutes.get('/ranking', requireAuth(), async (c) => {
   const rol = parseRol(c.req.query('rol'));
   const condition = rolCondition(rol);
 
-  await refreshUserChallenges(db, {
-    id: sessionUser.id,
-    role: sessionUser.role,
-  });
+  if (sessionUser.role !== 'admin') {
+    await refreshUserChallenges(db, {
+      id: sessionUser.id,
+      role: sessionUser.role,
+    });
+  }
 
   const meRows = await db
     .select({

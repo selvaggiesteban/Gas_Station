@@ -23,7 +23,6 @@ const updatedAt = () =>
 
 export const ROLE_VALUES = [
   'admin',
-  'content_manager',
   'store_manager',
   'customer',
 ] as const;
@@ -94,7 +93,7 @@ export const users = sqliteTable(
     roleIdx: index('users_role_idx').on(t.role),
     roleChk: check(
       'users_role_chk',
-      sql`role in ('admin','content_manager','store_manager','customer')`,
+      sql`role in ('admin','store_manager','customer')`,
     ),
   }),
 );

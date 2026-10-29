@@ -24,8 +24,10 @@ export async function awardLoginPoints(
     id: number;
     lastLoginDay: string | null;
     loginStreak: number;
+    role: string;
   },
 ): Promise<number> {
+  if (user.role === 'admin') return 0;
   const today = todayInBuenosAires();
   if (user.lastLoginDay === today) return 0;
   const streak =

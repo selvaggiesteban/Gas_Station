@@ -213,10 +213,12 @@ appRoutes.get('/app', requireAuth(), async (c) => {
   const db = dbOf(c);
   const now = new Date();
 
-  await refreshUserChallenges(db, {
-    id: sessionUser.id,
-    role: sessionUser.role,
-  });
+  if (sessionUser.role !== 'admin') {
+    await refreshUserChallenges(db, {
+      id: sessionUser.id,
+      role: sessionUser.role,
+    });
+  }
 
   const rows = await db
     .select()
@@ -236,7 +238,7 @@ appRoutes.get('/app', requireAuth(), async (c) => {
 
   const greeting = `<div class="card">
     <h1>Hola, ${escapeHtml(user.name)}</h1>
-    <p>Sumá puntos iniciando sesión todos los días y completando desafíos semanales.</p>
+    ${user.role !== 'admin' ? '<p>Sumá puntos iniciando sesión todos los días y completando desafíos semanales.</p>' : ''}
     <p class="muted">
       Tenés <strong>${user.points} puntos</strong>
       · Racha actual: <strong>${profile?.loginStreak ?? 0} día(s)</strong>
@@ -250,7 +252,7 @@ appRoutes.get('/app', requireAuth(), async (c) => {
       { title: 'Inicio', brand: brandOf(c), user, error, notice },
       `${user.role === 'customer' ? PANEL_NAV : ''}${greeting}
       ${await loadAnnouncementsHtml(db, user, now)}
-      ${await loadActiveChallenges(db, user, now)}
+      ${user.role !== 'admin' ? await loadActiveChallenges(db, user, now) : ''}
       ${await loadPointLogsHtml(db, user.id)}`,
     ),
   );
@@ -258,6 +260,9 @@ appRoutes.get('/app', requireAuth(), async (c) => {
 
 appRoutes.post('/desafios/:id/unirse', requireAuth(), async (c) => {
   const user = c.get('user')!;
+  if (user.role === 'admin') {
+    return c.redirect(`/app?error=${encodeURIComponent('Los administradores no participan en desafíos.')}`);
+  }
   const id = Number(c.req.param('id'));
   const db = dbOf(c);
   const redirectWithError = (message: string) =>
@@ -265,7 +270,7 @@ appRoutes.post('/desafios/:id/unirse', requireAuth(), async (c) => {
   if (!Number.isInteger(id) || id <= 0) {
     return redirectWithError('No encontramos ese desafío.');
   }
-  const result = await joinChallenge(db, user.id, id);
+  const result = await joinChallenge(db, user.id, id, user.role);
   switch (result) {
     case 'joined':
       return c.redirect(

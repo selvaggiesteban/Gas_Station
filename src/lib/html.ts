@@ -198,59 +198,6 @@ export function escapeHtml(value: string): string {
   return esc(value);
 }
 
-function sidebarNav(user: { name: string; points: number; role: string }): string {
-  const role = user.role;
-  const isAdmin = role === 'admin';
-  const isGestor = role === 'store_manager';
-
-  const items: { href: string; label: string }[] = isAdmin
-    ? [
-        { href: '/app', label: 'Inicio' },
-        { href: '/admin/usuarios', label: 'Usuarios' },
-        { href: '/admin/tiendas', label: 'Tiendas' },
-        { href: '/admin/desafios', label: 'Desafíos' },
-        { href: '/admin/ordenes', label: 'Órdenes' },
-        { href: '/operativa', label: 'Operativa' },
-        { href: '/ranking', label: 'Ranking' },
-      ]
-    : isGestor
-      ? [
-          { href: '/app', label: 'Inicio' },
-          { href: '/tienda', label: 'Mi tienda' },
-          { href: '/operativa', label: 'Operativa' },
-          { href: '/admin/ordenes', label: 'Órdenes' },
-          { href: '/ranking', label: 'Ranking' },
-        ]
-      : [
-          { href: '/app', label: 'Inicio' },
-          { href: '/ranking', label: 'Ranking' },
-          { href: '/tienda', label: 'Tienda' },
-          { href: '/perfil', label: 'Tu perfil' },
-        ];
-
-  const links = items
-    .map(
-      (i) => `<a href="${i.href}">${esc(i.label)}</a>`,
-    )
-    .join('');
-
-  const logout = `<form method="post" action="/logout" style="margin:0">
-    <button class="btn secondary" style="width:100%;padding:0.5rem 0.7rem;font-size:0.85rem">Cerrar sesión</button>
-  </form>`;
-
-  return `<aside class="sidebar">
-    <div class="sid-brand"><img src="${LOGO_IMG}" alt="LESCO GNC" style="width:36px;height:36px;flex-shrink:0;display:block"><span style="margin-left:0.25rem;font-size:0.9rem">${esc(brandOfFake())}</span></div>
-    <div class="sid-user">${esc(user.name)} · ${esc(role)}</div>
-    ${links}
-    <div class="sep"></div>
-    <div class="sid-foot">${logout}</div>
-  </aside>`;
-}
-
-function brandOfFake(): string {
-  return 'LESCO GNC';
-}
-
 export function page(opts: PageOptions, body: string): string {
   const brand = opts.brand ?? 'LESCO GNC';
   const alerts = [

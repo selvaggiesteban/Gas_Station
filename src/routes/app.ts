@@ -1,13 +1,31 @@
 import { Hono } from 'hono';
-import { and, desc, eq, gte, inArray, isNotNull, lte, or } from 'drizzle-orm';
+import {
+  and,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  lt,
+  lte,
+  or,
+  sql,
+} from 'drizzle-orm';
 import type { AppEnv } from '../env';
 import { dbOf, brandOf, requireAuth } from '../middleware/auth';
 import { page, escapeHtml } from '../lib/html';
 import { hashPassword, verifyPassword, iterationsFromEnv } from '../lib/crypto';
 import {
   announcements,
+  cashDays,
   challengeParticipations,
+  dailyActivities,
+  lubricantStocks,
   pointLogs,
+  raffleCoupons,
+  salesSummaries,
+  shiftReports,
+  stores,
   users,
   weeklyChallenges,
   type ANNOUNCEMENT_AUDIENCE_VALUES,
@@ -21,6 +39,7 @@ import {
   refreshUserChallenges,
   type Challenge,
 } from '../services/challenges';
+import { ensureDefaultStore } from '../services/orders';
 
 export const appRoutes = new Hono<AppEnv>();
 
@@ -41,6 +60,183 @@ const POINT_REASON_LABELS: Record<string, string> = {
   order: 'Compra',
   admin_adjust: 'Ajuste administrativo',
 };
+
+const DAY_FMT = new Intl.DateTimeFormat('es-AR', {
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+  timeZone: 'UTC',
+});
+
+function formatArs(cents: number): string {
+  return new Intl.NumberFormat('es-AR', {
+    style: 'currency',
+    currency: 'ARS',
+  }).format(cents / 100);
+}
+
+function utcDayStart(d: Date): Date {
+  return new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
+  );
+}
+
+function nextDay(d: Date): Date {
+  return new Date(d.getTime() + 24 * 3600 * 1000);
+}
+
+function statTile(label: string, value: string, detail?: string): string {
+  return `<div style="border:1px solid var(--border);border-radius:0.6rem;padding:0.75rem 0.85rem">
+    <p class="muted" style="margin:0;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em">${label}</p>
+    <p style="margin:0.3rem 0 0;font-size:1.15rem;font-weight:700;font-variant-numeric:tabular-nums">${value}</p>
+    ${detail ? `<p class="muted" style="margin:0.2rem 0 0;font-size:0.8rem">${detail}</p>` : ''}
+  </div>`;
+}
+
+async function loadOperativaDashboardHtml(db: Db): Promise<string> {
+  const storeId = await ensureDefaultStore(db);
+  const storeRows = await db
+    .select({ name: stores.name })
+    .from(stores)
+    .where(eq(stores.id, storeId))
+    .limit(1);
+  const storeName = storeRows[0]?.name ?? '—';
+
+  const today = utcDayStart(new Date());
+  const tomorrow = nextDay(today);
+
+  const [cashRows, salesRows, activityRows, shiftRows, lubeRows, raffle] =
+    await Promise.all([
+      db
+        .select()
+        .from(cashDays)
+        .where(
+          and(
+            eq(cashDays.storeId, storeId),
+            gte(cashDays.reportDate, today),
+            lt(cashDays.reportDate, tomorrow),
+          ),
+        )
+        .limit(1),
+      db
+        .select()
+        .from(salesSummaries)
+        .where(
+          and(
+            eq(salesSummaries.storeId, storeId),
+            gte(salesSummaries.reportDate, today),
+            lt(salesSummaries.reportDate, tomorrow),
+          ),
+        )
+        .orderBy(desc(salesSummaries.reportDate), desc(salesSummaries.id))
+        .limit(10),
+      db
+        .select()
+        .from(dailyActivities)
+        .where(
+          and(
+            eq(dailyActivities.storeId, storeId),
+            gte(dailyActivities.reportDate, today),
+            lt(dailyActivities.reportDate, tomorrow),
+          ),
+        )
+        .orderBy(desc(dailyActivities.reportDate), desc(dailyActivities.id))
+        .limit(10),
+      db
+        .select()
+        .from(shiftReports)
+        .where(
+          and(
+            eq(shiftReports.storeId, storeId),
+            gte(shiftReports.reportDate, today),
+            lt(shiftReports.reportDate, tomorrow),
+          ),
+        )
+        .orderBy(desc(shiftReports.reportDate), desc(shiftReports.id))
+        .limit(10),
+      db
+        .select()
+        .from(lubricantStocks)
+        .where(eq(lubricantStocks.storeId, storeId))
+        .orderBy(desc(lubricantStocks.reportDate), desc(lubricantStocks.id))
+        .limit(1),
+      db
+        .select({
+          total: sql<number>`count(*)`,
+          winners: sql<number>`coalesce(sum(case when ${raffleCoupons.winning} then 1 else 0 end), 0)`,
+        })
+        .from(raffleCoupons)
+        .where(eq(raffleCoupons.storeId, storeId))
+        .limit(1),
+    ]);
+
+  const cash = cashRows[0];
+  const salesTotal = salesRows.reduce((acc, r) => acc + r.totalCents, 0);
+  const gncVolume = activityRows.reduce((acc, r) => acc + r.gncVolume, 0);
+  const gncSales = activityRows.reduce((acc, r) => acc + r.gncSalesCents, 0);
+  const lastShift = shiftRows[0];
+  const lube = lubeRows[0];
+  const rafTotal = Number(raffle[0]?.total ?? 0);
+  const rafWinners = Number(raffle[0]?.winners ?? 0);
+
+  const tiles = [
+    statTile(
+      'Caja de hoy',
+      cash
+        ? cash.status === 'open'
+          ? 'Abierta'
+          : 'Cerrada'
+        : 'Sin apertura',
+      cash
+        ? `Apertura ${formatArs(cash.openingCents)}${
+            cash.differenceCents !== null
+              ? ` · Diferencia ${formatArs(cash.differenceCents)}`
+              : ''
+          }`
+        : 'Cargá la apertura del día.',
+    ),
+    statTile(
+      'Ventas de hoy',
+      salesRows.length > 0 ? formatArs(salesTotal) : 'Sin carga',
+      salesRows.length > 0
+        ? `${salesRows.length} turno(s) cargado(s)`
+        : 'Cargá el resumen de un turno.',
+    ),
+    statTile(
+      'GNC de hoy',
+      activityRows.length > 0 ? `${gncVolume} m³` : 'Sin carga',
+      activityRows.length > 0
+        ? `${formatArs(gncSales)} en ventas · ${activityRows.length} turno(s)`
+        : 'Cargá la matriz de GNC.',
+    ),
+    statTile(
+      'Rendición de turno',
+      lastShift ? `${shiftRows.length} turno(s)` : 'Sin carga',
+      lastShift
+        ? `Último cierre ${formatArs(lastShift.closingCents)}`
+        : 'Cargá la rendición del turno.',
+    ),
+    statTile(
+      'Lubricantes',
+      lube ? `${lube.closingQty} envases` : 'Sin recuentos',
+      lube
+        ? `${escapeHtml(lube.brand)} ${escapeHtml(lube.grade)} · ${DAY_FMT.format(lube.reportDate)}`
+        : 'Hacé el recuento de aceite.',
+    ),
+    statTile(
+      'Sorteo',
+      `${rafTotal} emitido(s)`,
+      `${rafWinners} ganador(es)`,
+    ),
+  ].join('');
+
+  return `<div class="card">
+    <h2>Resumen de operativa</h2>
+    <p class="muted">Hoy · ${DAY_FMT.format(today)} · Tienda: <strong>${escapeHtml(storeName)}</strong></p>
+    <div class="grid">${tiles}</div>
+    <a class="btn secondary" href="/operativa" style="margin-top:0.75rem">Abrir operativa</a>
+  </div>`;
+}
 
 function audienceCondition(role: SessionUser['role']) {
   if (role === 'admin') return undefined;
@@ -235,15 +431,21 @@ appRoutes.get('/app', requireAuth(), async (c) => {
 
   const error = c.req.query('error');
   const notice = c.req.query('aviso');
+  const isAdmin = user.role === 'admin';
+  const canOperativa = isAdmin || user.role === 'store_manager';
 
   const greeting = `<div class="card">
     <h1>Hola, ${escapeHtml(user.name)}</h1>
-    ${user.role !== 'admin' ? '<p>Sumá puntos iniciando sesión todos los días y completando desafíos semanales.</p>' : ''}
+    ${
+      isAdmin
+        ? '<p class="muted">Panel de administración de LESCO GNC.</p>'
+        : `<p>Sumá puntos iniciando sesión todos los días y completando desafíos semanales.</p>
     <p class="muted">
       Tenés <strong>${user.points} puntos</strong>
       · Racha actual: <strong>${profile?.loginStreak ?? 0} día(s)</strong>
       · Último inicio de sesión: <strong>${profile?.lastLoginDay ?? '—'}</strong>
-    </p>
+    </p>`
+    }
     <a class="btn secondary" href="/perfil">Tu perfil</a>
   </div>`;
 
@@ -251,9 +453,10 @@ appRoutes.get('/app', requireAuth(), async (c) => {
     page(
       { title: 'Inicio', brand: brandOf(c), user, error, notice },
       `${user.role === 'customer' ? PANEL_NAV : ''}${greeting}
+      ${canOperativa ? await loadOperativaDashboardHtml(db) : ''}
       ${await loadAnnouncementsHtml(db, user, now)}
-      ${user.role !== 'admin' ? await loadActiveChallenges(db, user, now) : ''}
-      ${await loadPointLogsHtml(db, user.id)}`,
+      ${!isAdmin ? await loadActiveChallenges(db, user, now) : ''}
+      ${!isAdmin ? await loadPointLogsHtml(db, user.id) : ''}`,
     ),
   );
 });

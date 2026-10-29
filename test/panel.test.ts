@@ -52,6 +52,12 @@ async function register(
   });
 }
 
+let seq = 0;
+function uniqueEmail(prefix: string): string {
+  seq += 1;
+  return `${prefix}-${Date.now()}-${seq}@test.com`;
+}
+
 async function insertChallenge(opts: {
   title: string;
   goalValue: number;
@@ -224,5 +230,50 @@ describe('panel de usuario', () => {
     expect(html).toContain('Ranking');
     expect(html).not.toMatch(/batalla/i);
     expect(html).not.toMatch(/battle/i);
+  });
+
+  it('el home del admin oculta puntos y movimientos y muestra el resumen de operativa', async () => {
+    const email = uniqueEmail('admin-inicio');
+    const reg = await register('Ana Admin', email);
+    const cookie = sessionCookie(reg);
+    await env.DB.prepare("update users set role = 'admin' where email = ?")
+      .bind(email)
+      .run();
+    const app = await get('/app', cookie);
+    expect(app.status).toBe(200);
+    const html = await app.text();
+    expect(html).toContain('Ana Admin');
+    expect(html).not.toContain('Tenés');
+    expect(html).not.toContain('Racha actual');
+    expect(html).not.toContain('Últimos movimientos');
+    expect(html).toContain('Resumen de operativa');
+    expect(html).toContain('Caja de hoy');
+    expect(html).toContain('GNC de hoy');
+    expect(html).toContain('href="/operativa"');
+  });
+
+  it('el home del gestor muestra el resumen de operativa', async () => {
+    const email = uniqueEmail('gestor-inicio');
+    const reg = await register('Gina Gestora', email);
+    const cookie = sessionCookie(reg);
+    await env.DB.prepare("update users set role = 'store_manager' where email = ?")
+      .bind(email)
+      .run();
+    const app = await get('/app', cookie);
+    expect(app.status).toBe(200);
+    const html = await app.text();
+    expect(html).toContain('Resumen de operativa');
+    expect(html).toContain('Tenés');
+  });
+
+  it('el home del cliente no muestra el resumen de operativa', async () => {
+    const reg = await register('Cleo Cliente', uniqueEmail('cliente-inicio'));
+    const cookie = sessionCookie(reg);
+    const app = await get('/app', cookie);
+    expect(app.status).toBe(200);
+    const html = await app.text();
+    expect(html).not.toContain('Resumen de operativa');
+    expect(html).toContain('puntos');
+    expect(html).toContain('Últimos movimientos');
   });
 });

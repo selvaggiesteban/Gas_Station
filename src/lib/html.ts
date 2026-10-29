@@ -106,8 +106,11 @@ main.landing { max-width: 72rem; }
 .sidebar { position: fixed; top: 0; left: 0; width: 210px; height: 100vh;
   background: var(--sidebar-bg); border-right: 1px solid var(--sidebar-border);
   padding-top: 4.2rem; padding-bottom: 1rem; overflow-y: auto; z-index: 50;
-  transform: translateX(-100%); transition: transform 0.25s ease; }
-.sidebar.open { transform: translateX(0); }
+  transition: transform 0.25s ease; }
+@media (max-width: 768px) {
+  .sidebar { transform: translateX(-100%); }
+  .sidebar.open { transform: translateX(0); }
+}
 .sidebar .sid-brand { padding: 0.75rem 1rem; font-weight: 800; font-size: 1.05rem;
   color: var(--fg); border-bottom: 1px solid var(--sidebar-border); margin-bottom: 0.5rem; }
 .sidebar .sid-user { padding: 0.75rem 1rem; font-size: 0.8rem; color: var(--muted);
@@ -140,8 +143,6 @@ main.landing { max-width: 72rem; }
   .sidebar-overlay.open { opacity: 1; visibility: visible; }
   .layout-user main { padding: 1rem; }
   header.top .wrap { padding: 0.75rem 1rem; }
-  .sidebar { transform: translateX(-100%); }
-  .sidebar.open { transform: translateX(0); }
   main { margin-left: 0; }
   .cta-row { flex-direction: column; width: 100%; }
   .cta-row .btn { width: 100%; }
@@ -239,7 +240,7 @@ function sidebarNav(user: { name: string; points: number; role: string }): strin
   </form>`;
 
   return `<aside class="sidebar">
-    <div class="sid-brand"><img src="${LOGO_IMG}" alt="Gas Station" style="width:36px;height:36px;flex-shrink:0;display:block"><span style="margin-left:0.25rem;font-size:0.9rem">${esc(brandOfFake())}</span></div>
+    <div class="sid-brand"><img src="${LOGO_IMG}" alt="LESCO GNC" style="width:36px;height:36px;flex-shrink:0;display:block"><span style="margin-left:0.25rem;font-size:0.9rem">${esc(brandOfFake())}</span></div>
     <div class="sid-user">${esc(user.name)} · ${esc(role)}</div>
     ${links}
     <div class="sep"></div>
@@ -248,11 +249,11 @@ function sidebarNav(user: { name: string; points: number; role: string }): strin
 }
 
 function brandOfFake(): string {
-  return 'Gas Station';
+  return 'LESCO GNC';
 }
 
 export function page(opts: PageOptions, body: string): string {
-  const brand = opts.brand ?? 'Gas Station';
+  const brand = opts.brand ?? 'LESCO GNC';
   const alerts = [
     opts.error ? `<div class="alert-error">${esc(opts.error)}</div>` : '',
     opts.notice ? `<div class="alert-ok">${esc(opts.notice)}</div>` : '',
@@ -260,7 +261,7 @@ export function page(opts: PageOptions, body: string): string {
 
   const footer = opts.landing
     ? `<footer class="foot"><div class="wrap">
-  <span class="brand"><img src="${LOGO_IMG}" alt="Gas Station" style="width:36px;height:36px;flex-shrink:0;display:block"><span>${esc(brand)}</span></span>
+  <span class="brand"><img src="${LOGO_IMG}" alt="LESCO GNC" style="width:36px;height:36px;flex-shrink:0;display:block"><span>${esc(brand)}</span></span>
   <span class="muted">© ${new Date().getFullYear()} ${esc(brand)}. Todos los derechos reservados.</span>
 </div></footer>`
     : '';
@@ -279,16 +280,16 @@ export function page(opts: PageOptions, body: string): string {
     return head +
       `<div class="sidebar-overlay" id="sidebarOverlay"></div>
       <aside class="sidebar" id="sidebar">
-        <div class="sid-brand"><img src="${LOGO_IMG}" alt="Gas Station" style="width:36px;height:36px;flex-shrink:0;display:block"><span style="margin-left:0.25rem;font-size:0.9rem">${esc(brand)}</span></div>
+        <div class="sid-brand"><img src="${LOGO_IMG}" alt="LESCO GNC" style="width:36px;height:36px;flex-shrink:0;display:block"><span style="margin-left:0.25rem;font-size:0.9rem">${esc(brand)}</span></div>
         <div class="sid-user">${esc(opts.user.name)} · ${esc(opts.user.role)}</div>
         ${sidebarLinks(opts.user)}
         <div class="sep"></div>
         <div class="sid-foot"><form method="post" action="/logout" style="margin:0"><button class="btn secondary" style="width:100%;padding:0.5rem 0.7rem;font-size:0.85rem">Cerrar sesión</button></form></div>
       </aside>
-      <main style="margin-left:0;padding:1rem 1.5rem;min-width:0;">
+      <main style="margin-left:210px;padding:1rem 1.5rem;min-width:0;">
         <header class="top"><div class="wrap" style="max-width:none;">
           <button class="hamburger" id="hamburger" aria-label="Menú" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg></button>
-          <a class="brand" href="/"><img src="${LOGO_IMG}" alt="Gas Station" style="width:36px;height:36px;flex-shrink:0;display:block"><span>${esc(brand)}</span></a>
+          <a class="brand" href="/"><img src="${LOGO_IMG}" alt="LESCO GNC" style="width:36px;height:36px;flex-shrink:0;display:block"><span>${esc(brand)}</span></a>
           <span class="muted" style="font-size:0.85rem">${esc(opts.user.name)}</span>
         </div></header>
         ${alerts}
@@ -316,7 +317,7 @@ export function page(opts: PageOptions, body: string): string {
     const nav = headerNav(opts);
     return head +
       `<header class="top"><div class="wrap">
-        <a class="brand" href="/"><img src="${LOGO_IMG}" alt="Gas Station" style="width:36px;height:36px;flex-shrink:0;display:block"><span>${esc(brand)}</span></a>
+        <a class="brand" href="/"><img src="${LOGO_IMG}" alt="LESCO GNC" style="width:36px;height:36px;flex-shrink:0;display:block"><span>${esc(brand)}</span></a>
         ${nav}
       </div></header>
       <main class="wrap${opts.landing ? ' landing' : ''}">
@@ -329,7 +330,7 @@ export function page(opts: PageOptions, body: string): string {
 
   return head +
     `<header class="top"><div class="wrap">
-      <a class="brand" href="/"><img src="${LOGO_IMG}" alt="Gas Station" style="width:36px;height:36px;flex-shrink:0;display:block"><span>${esc(brand)}</span></a>
+      <a class="brand" href="/"><img src="${LOGO_IMG}" alt="LESCO GNC" style="width:36px;height:36px;flex-shrink:0;display:block"><span>${esc(brand)}</span></a>
       ${headerNav(opts)}
     </div></header>
     <main class="wrap${opts.landing ? ' landing' : ''}">

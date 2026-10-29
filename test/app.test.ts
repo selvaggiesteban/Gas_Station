@@ -31,7 +31,7 @@ describe('app', () => {
     const res = await SELF.fetch(BASE + '/', { redirect: 'manual' });
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('Gas Station');
+    expect(html).toContain('LESCO GNC');
     expect(html).toContain('Creá tu cuenta');
     expect(html).toContain('lang="es-AR"');
     expect(html).toContain('class="public"');

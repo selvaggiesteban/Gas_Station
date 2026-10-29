@@ -11,7 +11,7 @@ export const LOGO_IMG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAADIC
 
 const BASE_STYLE = `
 :root { color-scheme: light;
-  --bg: #fafafa; --fg: #0a0a0a; --surface: #ffffff; --border: #e4e4e7;
+  --bg: #ffffff; --fg: #0a0a0a; --surface: #ffffff; --border: #e4e4e7;
   --muted: #71717a; --brand: #0a0a0a; --on-brand: #ffffff; --brand-contrast: #ffffff;
   --danger-bg: #18181b; --danger-fg: #ffffff; --danger-border: #18181b;
   --ok-bg: #f4f4f5; --ok-fg: #18181b; --ok-border: #a1a1aa;
@@ -88,7 +88,7 @@ main.landing { max-width: 72rem; }
 .foot .muted { color: var(--muted); }
 .home { display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;padding:2rem;text-align:center; }
 .home-brand { margin-bottom:1.5rem; }
-.home-brand img { width:110px;height:110px;object-fit:contain;display:block;margin:0 auto; }
+.home-brand img { width:180px;height:180px;object-fit:contain;display:block;margin:0 auto; }
 .home-lead { color:var(--muted);font-size:1.15rem;margin-bottom:2rem;max-width:46rem; }
 .home-cta { display:flex;gap:0.75rem;justify-content:center;flex-wrap:wrap; }
 .home-cta .btn { padding:0.75rem 1.5rem;font-size:1rem; }
@@ -239,7 +239,7 @@ function sidebarNav(user: { name: string; points: number; role: string }): strin
   </form>`;
 
   return `<aside class="sidebar">
-    <div class="sid-brand"><img src="${LOGO_IMG}" alt="Gas Station" style="width:28px;height:28px;flex-shrink:0;display:block"><span style="margin-left:0.25rem;font-size:0.9rem">${esc(brandOfFake())}</span></div>
+    <div class="sid-brand"><img src="${LOGO_IMG}" alt="Gas Station" style="width:36px;height:36px;flex-shrink:0;display:block"><span style="margin-left:0.25rem;font-size:0.9rem">${esc(brandOfFake())}</span></div>
     <div class="sid-user">${esc(user.name)} · ${esc(role)}</div>
     ${links}
     <div class="sep"></div>
@@ -260,7 +260,7 @@ export function page(opts: PageOptions, body: string): string {
 
   const footer = opts.landing
     ? `<footer class="foot"><div class="wrap">
-  <span class="brand"><img src="${LOGO_IMG}" alt="Gas Station" style="width:28px;height:28px;flex-shrink:0;display:block"><span>${esc(brand)}</span></span>
+  <span class="brand"><img src="${LOGO_IMG}" alt="Gas Station" style="width:36px;height:36px;flex-shrink:0;display:block"><span>${esc(brand)}</span></span>
   <span class="muted">© ${new Date().getFullYear()} ${esc(brand)}. Todos los derechos reservados.</span>
 </div></footer>`
     : '';
@@ -279,7 +279,7 @@ export function page(opts: PageOptions, body: string): string {
     return head +
       `<div class="sidebar-overlay" id="sidebarOverlay"></div>
       <aside class="sidebar" id="sidebar">
-        <div class="sid-brand"><img src="${LOGO_IMG}" alt="Gas Station" style="width:28px;height:28px;flex-shrink:0;display:block"><span style="margin-left:0.25rem;font-size:0.9rem">${esc(brand)}</span></div>
+        <div class="sid-brand"><img src="${LOGO_IMG}" alt="Gas Station" style="width:36px;height:36px;flex-shrink:0;display:block"><span style="margin-left:0.25rem;font-size:0.9rem">${esc(brand)}</span></div>
         <div class="sid-user">${esc(opts.user.name)} · ${esc(opts.user.role)}</div>
         ${sidebarLinks(opts.user)}
         <div class="sep"></div>
@@ -288,7 +288,7 @@ export function page(opts: PageOptions, body: string): string {
       <main style="margin-left:0;padding:1rem 1.5rem;min-width:0;">
         <header class="top"><div class="wrap" style="max-width:none;">
           <button class="hamburger" id="hamburger" aria-label="Menú" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg></button>
-          <a class="brand" href="/"><img src="${LOGO_IMG}" alt="Gas Station" style="width:28px;height:28px;flex-shrink:0;display:block"><span>${esc(brand)}</span></a>
+          <a class="brand" href="/"><img src="${LOGO_IMG}" alt="Gas Station" style="width:36px;height:36px;flex-shrink:0;display:block"><span>${esc(brand)}</span></a>
           <span class="muted" style="font-size:0.85rem">${esc(opts.user.name)}</span>
         </div></header>
         ${alerts}
@@ -316,7 +316,7 @@ export function page(opts: PageOptions, body: string): string {
     const nav = headerNav(opts);
     return head +
       `<header class="top"><div class="wrap">
-        <a class="brand" href="/"><img src="${LOGO_IMG}" alt="Gas Station" style="width:28px;height:28px;flex-shrink:0;display:block"><span>${esc(brand)}</span></a>
+        <a class="brand" href="/"><img src="${LOGO_IMG}" alt="Gas Station" style="width:36px;height:36px;flex-shrink:0;display:block"><span>${esc(brand)}</span></a>
         ${nav}
       </div></header>
       <main class="wrap${opts.landing ? ' landing' : ''}">
@@ -329,7 +329,7 @@ export function page(opts: PageOptions, body: string): string {
 
   return head +
     `<header class="top"><div class="wrap">
-      <a class="brand" href="/"><img src="${LOGO_IMG}" alt="Gas Station" style="width:28px;height:28px;flex-shrink:0;display:block"><span>${esc(brand)}</span></a>
+      <a class="brand" href="/"><img src="${LOGO_IMG}" alt="Gas Station" style="width:36px;height:36px;flex-shrink:0;display:block"><span>${esc(brand)}</span></a>
       ${headerNav(opts)}
     </div></header>
     <main class="wrap${opts.landing ? ' landing' : ''}">

@@ -131,24 +131,6 @@ function notFoundBody(volver: string): string {
     <a class="btn secondary" href="${volver}">Volver</a></div>`;
 }
 
-function adminNav(
-  section: 'panel' | 'usuarios' | 'tiendas' | 'desafios' | 'ordenes',
-): string {
-  const items: Array<{ key: typeof section; label: string; href: string }> = [
-    { key: 'panel', label: 'Panel', href: '/admin' },
-    { key: 'usuarios', label: 'Usuarios', href: '/admin/usuarios' },
-    { key: 'tiendas', label: 'Tiendas', href: '/admin/tiendas' },
-    { key: 'desafios', label: 'Desafíos', href: '/admin/desafios' },
-    { key: 'ordenes', label: 'Órdenes', href: '/admin/ordenes' },
-  ];
-  return `<p class="row" style="margin-top:0">${items
-    .map(
-      (it) =>
-        `<a class="btn${it.key === section ? '' : ' secondary'}" href="${it.href}" style="${SMALL_BTN}">${it.label}</a>`,
-    )
-    .join('')}</p>`;
-}
-
 export const adminRoutes = new Hono<AppEnv>();
 
 adminRoutes.use('/admin', requireRole('admin'));
@@ -182,7 +164,6 @@ adminRoutes.get('/admin', async (c) => {
       },
       `<div class="card">
         <h1>Panel de administración</h1>
-        ${adminNav('panel')}
         <div class="row">
           <span class="pill">${usersTotal[0]?.n ?? 0} usuarios (${usersActive[0]?.n ?? 0} activos)</span>
           <span class="pill">${storesActive[0]?.n ?? 0} tiendas activas</span>
@@ -264,7 +245,6 @@ adminRoutes.get('/admin/usuarios', async (c) => {
       },
       `<div class="card">
         <h1>Usuarios</h1>
-        ${adminNav('usuarios')}
         <form method="get" action="/admin/usuarios" class="row">
           <input type="search" name="q" value="${escapeHtml(q)}" placeholder="Buscá por nombre o email" style="flex:1;min-width:12rem;margin-top:0">
           <button type="submit" style="${SMALL_BTN}">Buscá</button>
@@ -434,7 +414,6 @@ adminRoutes.get('/admin/tiendas', async (c) => {
       },
       `<div class="card">
         <h1>Tienda</h1>
-        ${adminNav('tiendas')}
         <p class="muted">La estación opera con una única tienda. Editá su nombre y zona acá abajo.</p>
         <form method="post" action="/admin/tiendas/editar">
           <label for="store-name">Nombre</label>
@@ -619,7 +598,6 @@ adminRoutes.get('/admin/desafios', async (c) => {
       },
       `<div class="card">
         <h1>Desafíos semanales</h1>
-        ${adminNav('desafios')}
         ${tarjetas || '<p class="muted">Todavía no hay desafíos. Creá el primero acá abajo.</p>'}
       </div>
       <div class="card">
@@ -894,7 +872,6 @@ adminRoutes.get('/admin/ordenes', async (c) => {
       },
       `<div class="card">
         <h1>Órdenes</h1>
-        ${adminNav('ordenes')}
         <form method="get" action="/admin/ordenes" class="row">
           <select name="estado" style="width:auto;margin-top:0">
             <option value="">Todos los estados</option>
@@ -1030,7 +1007,6 @@ adminRoutes.get('/admin/ordenes/:id', async (c) => {
       },
       `<div class="card">
         <h1>Orden ${escapeHtml(order.number)}</h1>
-        ${adminNav('ordenes')}
         <div class="row">
           <span class="pill">${ORDER_STATUS_LABELS[order.status] ?? order.status}</span>
           <span class="muted">Creada: ${fmtFecha(order.createdAt)}</span>

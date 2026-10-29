@@ -3,11 +3,23 @@ import { SELF, env } from 'cloudflare:test';
 
 const BASE = 'https://gas-station.test';
 
-function encode(data: Record<string, string>): string {
-  return new URLSearchParams(data).toString();
+function encode(data: Record<string, string | string[]>): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(data)) {
+    if (Array.isArray(value)) {
+      for (const item of value) params.append(key, item);
+    } else {
+      params.append(key, value);
+    }
+  }
+  return params.toString();
 }
 
-async function post(path: string, data: Record<string, string>, cookie?: string) {
+async function post(
+  path: string,
+  data: Record<string, string | string[]>,
+  cookie?: string,
+) {
   return SELF.fetch(BASE + path, {
     method: 'POST',
     headers: {
@@ -175,6 +187,103 @@ describe('operativa', () => {
     );
     expect(duplicate.status).toBe(422);
     expect(await count('cash_days')).toBe(antes + 1);
+  });
+
+  it('caja: resumen en papel con líneas de entradas, salidas y totales', async () => {
+    const cookie = await registerAs(
+      'Caja Papel',
+      uniqueEmail('caja-papel'),
+      'admin',
+    );
+    const fecha = '2026-11-09';
+    const dia = Date.UTC(2026, 10, 9);
+
+    const abierta = await post('/operativa/caja', { fecha, apertura: '200' }, cookie);
+    expect(abierta.status).toBe(302);
+
+    const guardado = await post(
+      '/operativa/caja/lineas',
+      {
+        fecha,
+        entrada_d: ['Saldo día anterior', 'Turno mañana'],
+        entrada_i: ['1000', '250.50'],
+        salida_d: ['Venta M Pago'],
+        salida_i: ['100'],
+      },
+      cookie,
+    );
+    expect(guardado.status).toBe(302);
+    expect(guardado.headers.get('location')).toBe(
+      '/operativa/caja?fecha=2026-11-09&aviso=1',
+    );
+
+    const filas = await env.DB.prepare(
+      'select count(*) as n from cash_lines where report_date = ?',
+    )
+      .bind(dia)
+      .first<{ n: number }>();
+    expect(filas?.n).toBe(3);
+
+    const vista = await get(`/operativa/caja?fecha=${fecha}`, cookie);
+    expect(vista.status).toBe(200);
+    const html = await vista.text();
+    expect(html).toContain('>Entradas<');
+    expect(html).toContain('>Salidas<');
+    expect(html).toContain('Total Entradas');
+    expect(html).toContain('Total Salidas');
+    expect(html).toContain('Total Neto');
+    expect(html).toContain('Total del día');
+    expect(html).toContain('Saldo día anterior');
+    expect(html).toContain('1.250,50'); // total entradas
+    expect(html).toContain('100,00'); // total salidas
+    expect(html).toContain('1.150,50'); // total neto
+    expect(html).toContain('1.350,50'); // total del día
+
+    const reemplazo = await post(
+      '/operativa/caja/lineas',
+      {
+        fecha,
+        entrada_d: ['Banco'],
+        entrada_i: ['50'],
+        salida_d: [''],
+        salida_i: [''],
+      },
+      cookie,
+    );
+    expect(reemplazo.status).toBe(302);
+    const despues = await env.DB.prepare(
+      'select count(*) as n from cash_lines where report_date = ?',
+    )
+      .bind(dia)
+      .first<{ n: number }>();
+    expect(despues?.n).toBe(1);
+
+    const sinDetalle = await post(
+      '/operativa/caja/lineas',
+      { fecha, entrada_d: [''], entrada_i: ['10'] },
+      cookie,
+    );
+    expect(sinDetalle.status).toBe(422);
+    const sigueUno = await env.DB.prepare(
+      'select count(*) as n from cash_lines where report_date = ?',
+    )
+      .bind(dia)
+      .first<{ n: number }>();
+    expect(sigueUno?.n).toBe(1);
+
+    const negativo = await post(
+      '/operativa/caja/lineas',
+      { fecha, entrada_d: ['x'], entrada_i: ['-1'] },
+      cookie,
+    );
+    expect(negativo.status).toBe(422);
+
+    const fechaMala = await post(
+      '/operativa/caja/lineas',
+      { fecha: 'no-es-fecha', entrada_d: ['x'], entrada_i: ['1'] },
+      cookie,
+    );
+    expect(fechaMala.status).toBe(422);
   });
 
   it('ventas: crear, listar y editar recalculando el total', async () => {
@@ -482,6 +591,15 @@ describe('operativa', () => {
     );
     expect(alta.status).toBe(403);
     expect(await count('cash_days')).toBe(cajas);
+
+    const lineasAntes = await count('cash_lines');
+    const lineas = await post(
+      '/operativa/caja/lineas',
+      { fecha: '2026-11-07', entrada_d: ['x'], entrada_i: ['10'] },
+      cookie,
+    );
+    expect(lineas.status).toBe(403);
+    expect(await count('cash_lines')).toBe(lineasAntes);
 
     const altaVenta = await post(
       '/operativa/ventas',

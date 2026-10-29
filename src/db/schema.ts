@@ -451,6 +451,8 @@ export const SHIFT_VALUES = ['morning', 'evening', 'night'] as const;
 
 export const CASH_STATUS_VALUES = ['open', 'closed'] as const;
 
+export const CASH_SIDE_VALUES = ['entrada', 'salida'] as const;
+
 export const FUEL_PRODUCT_VALUES = ['nafta', 'gasoil', 'diesel', 'gnc'] as const;
 
 export const cashDays = sqliteTable(
@@ -490,6 +492,34 @@ export const cashDays = sqliteTable(
       sql`status in ('open','closed')`,
     ),
     openingChk: check('cash_days_opening_chk', sql`opening_cents >= 0`),
+  }),
+);
+
+export const cashLines = sqliteTable(
+  'cash_lines',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    storeId: integer('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'cascade' }),
+    reportDate: integer('report_date', { mode: 'timestamp_ms' }).notNull(),
+    side: text('side', { enum: CASH_SIDE_VALUES }).notNull(),
+    sort: integer('sort').notNull().default(0),
+    detail: text('detail').notNull(),
+    amountCents: integer('amount_cents').notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => ({
+    storeIdx: index('cash_lines_store_idx').on(
+      t.storeId,
+      t.reportDate,
+      t.side,
+      t.sort,
+    ),
+    sideChk: check('cash_lines_side_chk', sql`side in ('entrada','salida')`),
+    amountChk: check('cash_lines_amount_chk', sql`amount_cents >= 0`),
+    detailChk: check('cash_lines_detail_chk', sql`length(trim(detail)) > 0`),
   }),
 );
 

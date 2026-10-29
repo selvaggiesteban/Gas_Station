@@ -10,6 +10,7 @@ import {
   FUEL_PRODUCT_VALUES,
   SHIFT_VALUES,
   cashDays,
+  cashLines,
   dailyActivities,
   lubricantStocks,
   products,
@@ -421,92 +422,373 @@ operativaRoutes.get('/operativa', async (c) => {
   );
 });
 
+const CAJA_MIN_FILAS = 6;
+const CAJA_MAX_FILAS = 60;
+
+type CajaSide = 'entrada' | 'salida';
+type CajaLine = { side: CajaSide; detail: string; amountCents: number };
+type CashRow = typeof cashDays.$inferSelect;
+
+function dateInput(d: Date): string {
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+}
+
+function utcToday(): Date {
+  const n = new Date();
+  return new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate()));
+}
+
+function asList(v: unknown): string[] {
+  if (Array.isArray(v)) {
+    return v.filter((x): x is string => typeof x === 'string');
+  }
+  return typeof v === 'string' ? [v] : [];
+}
+
+function cajaRow(side: CajaSide, detail: string, amount: string): string {
+  return `<tr>
+      <td><input class="campo-subrayado" type="text" name="${side}_d" value="${escapeHtml(detail)}" placeholder="Detalle" maxlength="80" aria-label="Detalle"></td>
+      <td class="num" style="white-space:nowrap">
+        <span style="display:inline-flex;gap:0.4rem;align-items:center;justify-content:flex-end">
+          <input class="campo-subrayado" type="number" name="${side}_i" value="${amount}" min="0" step="0.01" inputmode="decimal" placeholder="0" style="text-align:right;max-width:7.5rem" aria-label="Importe">
+          <button type="button" class="quitar" title="Quitar fila" aria-label="Quitar fila" style="margin-top:0;padding:0.05rem 0.5rem;font-size:0.8rem;line-height:1.5;background:transparent;color:#57534e;border:1px solid #d4d4d4;border-radius:999px">×</button>
+        </span>
+      </td>
+    </tr>`;
+}
+
+function cajaColumn(
+  side: CajaSide,
+  title: string,
+  lines: CajaLine[],
+  totalCents: number,
+): string {
+  const cells = lines.map((l) =>
+    cajaRow(side, l.detail, (l.amountCents / 100).toFixed(2)),
+  );
+  for (let i = lines.length; i < CAJA_MIN_FILAS; i += 1) {
+    cells.push(cajaRow(side, '', ''));
+  }
+  return `<section>
+      <table class="papel" data-side="${side}">
+        <thead>
+          <tr><th class="seccion" colspan="2" style="text-align:center">${title}</th></tr>
+          <tr><th>Detalle</th><th style="text-align:right">Total</th></tr>
+        </thead>
+        <tbody>${cells.join('')}</tbody>
+        <tfoot><tr>
+          <td class="seccion">Total ${title}</td>
+          <td class="num"><strong data-total="${side}">${formatArs(totalCents)}</strong></td>
+        </tr></tfoot>
+      </table>
+      <button type="button" class="secondary" data-add="${side}" style="${SMALL_BTN}">+ Agregar fila</button>
+    </section>`;
+}
+
+function controlCajaHtml(cash: CashRow | undefined, fechaInput: string): string {
+  if (!cash) {
+    return `<div class="seccion-papel">
+      <h2>Control de caja</h2>
+      <p class="muted">Todavía no hay caja para este día. Cargá la apertura para abrirla.</p>
+      <form method="post" action="/operativa/caja">
+        <input type="hidden" name="fecha" value="${fechaInput}">
+        <label for="caja-apertura">Efectivo de apertura (pesos)</label>
+        <input id="caja-apertura" name="apertura" type="number" step="0.01" min="0" required>
+        <label for="caja-notas">Notas (opcional)</label>
+        <input id="caja-notas" name="notas" type="text">
+        <button type="submit">Abrí la caja</button>
+      </form>
+    </div>`;
+  }
+  const resumen = `<p class="muted" style="margin:0 0 0.5rem">Estado: <span class="pill"${cash.status === 'closed' ? ' style="background:#57534e"' : ''}>${cash.status === 'open' ? 'Abierta' : 'Cerrada'}</span>
+      · Apertura: <strong>${formatArs(cash.openingCents)}</strong>
+      ${cash.closingDeclaredCents !== null ? ` · Declarado: <strong>${formatArs(cash.closingDeclaredCents)}</strong>` : ''}
+      ${cash.closingCountedCents !== null ? ` · Contado: <strong>${formatArs(cash.closingCountedCents)}</strong>` : ''}
+      ${cash.differenceCents !== null ? ` · Diferencia: <strong>${formatArs(cash.differenceCents)}</strong>` : ''}
+    </p>`;
+  if (cash.status === 'open') {
+    return `<div class="seccion-papel">
+      <h2>Control de caja</h2>
+      ${resumen}
+      <form method="post" action="/operativa/caja/${cash.id}/cerrar">
+        <label for="caja-declarado">Efectivo declarado (pesos)</label>
+        <input id="caja-declarado" name="declarado" type="number" step="0.01" min="0" required>
+        <label for="caja-contado">Efectivo contado (pesos)</label>
+        <input id="caja-contado" name="contado" type="number" step="0.01" min="0" required>
+        <label for="caja-cnotas">Notas de cierre</label>
+        <input id="caja-cnotas" name="notas" type="text">
+        <button type="submit">Cerrá la caja</button>
+      </form>
+    </div>`;
+  }
+  return `<div class="seccion-papel">
+    <h2>Control de caja</h2>
+    ${resumen}
+  </div>`;
+}
+
+function historialHtml(rows: CashRow[]): string {
+  if (rows.length === 0) return '';
+  const bodyRows = rows
+    .map(
+      (r) => `<tr>
+        <td style="${TD}">${fmtDay(r.reportDate)}</td>
+        <td style="${TD}">${r.status === 'open' ? 'Abierta' : 'Cerrada'}</td>
+        <td style="${TD_NUM}">${formatArs(r.openingCents)}</td>
+        <td style="${TD_NUM}">${r.differenceCents !== null ? formatArs(r.differenceCents) : '—'}</td>
+      </tr>`,
+    )
+    .join('');
+  return `<details style="margin-top:1rem">
+      <summary style="cursor:pointer;font-weight:600">Histórico de cajas</summary>
+      <table class="papel" style="margin-top:0.5rem">
+        <thead><tr>
+          <th style="${TH}">Fecha</th>
+          <th style="${TH}">Estado</th>
+          <th style="${TH}">Apertura</th>
+          <th style="${TH}">Diferencia</th>
+        </tr></thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
+    </details>`;
+}
+
+const CAJA_SCRIPT = `<script>
+(function () {
+  var form = document.getElementById('form-caja');
+  if (!form) return;
+  var fmt = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' });
+  function cents(input) {
+    var v = parseFloat(String(input.value).replace(',', '.'));
+    return isFinite(v) && v > 0 ? Math.round(v * 100) : 0;
+  }
+  function recalc() {
+    var e = 0, s = 0;
+    Array.prototype.forEach.call(form.querySelectorAll('table[data-side]'), function (t) {
+      Array.prototype.forEach.call(t.querySelectorAll('tbody tr'), function (tr) {
+        var input = tr.querySelector('input[type="number"]');
+        var c = input ? cents(input) : 0;
+        if (t.getAttribute('data-side') === 'entrada') e += c; else s += c;
+      });
+    });
+    form.querySelector('[data-total="entrada"]').textContent = fmt.format(e / 100);
+    form.querySelector('[data-total="salida"]').textContent = fmt.format(s / 100);
+    form.querySelector('[data-neto]').textContent = fmt.format((e - s) / 100);
+    form.querySelector('[data-dia]').textContent = fmt.format((e + s) / 100);
+  }
+  function bindRow(tr) {
+    tr.addEventListener('input', recalc);
+    var btn = tr.querySelector('.quitar');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      var tbody = tr.parentNode;
+      if (tbody.querySelectorAll('tr').length <= 1) {
+        Array.prototype.forEach.call(tr.querySelectorAll('input'), function (i) { i.value = ''; });
+      } else {
+        tbody.removeChild(tr);
+      }
+      recalc();
+    });
+  }
+  Array.prototype.forEach.call(form.querySelectorAll('tbody tr'), bindRow);
+  Array.prototype.forEach.call(form.querySelectorAll('[data-add]'), function (btn) {
+    btn.addEventListener('click', function () {
+      var tbody = form.querySelector('table[data-side="' + btn.getAttribute('data-add') + '"] tbody');
+      var template = tbody.querySelector('tr').cloneNode(true);
+      Array.prototype.forEach.call(template.querySelectorAll('input'), function (i) { i.value = ''; });
+      tbody.appendChild(template);
+      bindRow(template);
+      var first = template.querySelector('input[type="text"]');
+      if (first) first.focus();
+      recalc();
+    });
+  });
+  recalc();
+})();
+</script>`;
+
 operativaRoutes.get('/operativa/caja', async (c) => {
   const db = dbOf(c);
-  const user = c.get('user')!;
   const access = await resolveStore(c, db, c.req.query('tienda'));
   if ('error' in access) return denied(c, access.error);
   const fecha = str(c.req.query('fecha'));
   const day = fecha ? dayStart(fecha) : null;
   if (fecha && !day) {
-    return fail(
-      c,
-      'Caja diaria',
-      'Ingresá una fecha válida.',
-      '/operativa/caja',
-    );
+    return fail(c, 'Caja diaria', 'Ingresá una fecha válida.', '/operativa/caja');
   }
-  const rows = await db
-    .select()
-    .from(cashDays)
-    .where(
-      and(
-        eq(cashDays.storeId, access.storeId),
-        ...(day
-          ? [
-              gte(cashDays.reportDate, day),
-              lt(cashDays.reportDate, nextDay(day)),
-            ]
-          : []),
-      ),
-    )
-    .orderBy(desc(cashDays.reportDate), desc(cashDays.id))
-    .limit(50);
+  const selected = day ?? utcToday();
+  const fechaInput = dateInput(selected);
 
-  const bodyRows = rows
-    .map((r) => {
-      const cerrar =
-        r.status === 'open'
-          ? `<details style="display:inline">
-              <summary style="cursor:pointer;font-size:0.85rem">Cerrá</summary>
-              <form method="post" action="/operativa/caja/${r.id}/cerrar" style="min-width:14rem">
-                <label for="decl-${r.id}">Efectivo declarado (pesos)</label>
-                <input id="decl-${r.id}" name="declarado" type="number" step="0.01" min="0" required>
-                <label for="cnt-${r.id}">Efectivo contado (pesos)</label>
-                <input id="cnt-${r.id}" name="contado" type="number" step="0.01" min="0" required>
-                <label for="cnotas-${r.id}">Notas de cierre</label>
-                <input id="cnotas-${r.id}" name="notas" type="text">
-                <button type="submit" style="${SMALL_BTN}">Cerrá la caja</button>
-              </form>
-            </details>`
-          : '';
-      return `<tr>
-        <td style="${TD}">${fmtDay(r.reportDate)}</td>
-        <td style="${TD}"><span class="pill"${r.status === 'closed' ? ' style="background:#57534e"' : ''}>${r.status === 'open' ? 'Abierta' : 'Cerrada'}</span></td>
-        <td style="${TD}">${formatArs(r.openingCents)}</td>
-        <td style="${TD}">${r.closingDeclaredCents !== null ? formatArs(r.closingDeclaredCents) : '—'}</td>
-        <td style="${TD}">${r.closingCountedCents !== null ? formatArs(r.closingCountedCents) : '—'}</td>
-        <td style="${TD}">${r.differenceCents !== null ? formatArs(r.differenceCents) : '—'}</td>
-        <td style="${TD}">${cerrar}</td>
-      </tr>`;
-    })
-    .join('');
+  const [cashRows, lineRows, historial] = await Promise.all([
+    db
+      .select()
+      .from(cashDays)
+      .where(
+        and(
+          eq(cashDays.storeId, access.storeId),
+          gte(cashDays.reportDate, selected),
+          lt(cashDays.reportDate, nextDay(selected)),
+        ),
+      )
+      .limit(1),
+    db
+      .select()
+      .from(cashLines)
+      .where(
+        and(
+          eq(cashLines.storeId, access.storeId),
+          eq(cashLines.reportDate, selected),
+        ),
+      )
+      .orderBy(asc(cashLines.sort), asc(cashLines.id)),
+    db
+      .select()
+      .from(cashDays)
+      .where(eq(cashDays.storeId, access.storeId))
+      .orderBy(desc(cashDays.reportDate), desc(cashDays.id))
+      .limit(20),
+  ]);
 
-  const storesHtml = await storeOptions(db, access.storeId);
+  const cash = cashRows[0];
+  const entradas = lineRows.filter((l) => l.side === 'entrada');
+  const salidas = lineRows.filter((l) => l.side === 'salida');
+  const totalEntradas = entradas.reduce((acc, l) => acc + l.amountCents, 0);
+  const totalSalidas = salidas.reduce((acc, l) => acc + l.amountCents, 0);
+  const totalNeto = totalEntradas - totalSalidas;
+  const totalDia = totalEntradas + totalSalidas;
+
+  const cabecera = `<div class="cabecera-papel" style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap">
+      <h1>Caja</h1>
+      <form method="get" action="/operativa/caja" class="row" style="gap:0.5rem;align-items:center">
+        <input type="date" name="fecha" value="${fechaInput}" style="width:auto;margin-top:0" aria-label="Fecha">
+        <button type="submit" style="${SMALL_BTN}">Mostrá</button>
+      </form>
+      <p class="sub" style="margin:0">Fecha: <strong>${fmtDay(selected)}</strong>${cash ? ` · <span class="pill"${cash.status === 'closed' ? ' style="background:#57534e"' : ''}>${cash.status === 'open' ? 'Abierta' : 'Cerrada'}</span>` : ''}</p>
+    </div>`;
+
+  const resumen = `<form method="post" action="/operativa/caja/lineas" id="form-caja">
+      <input type="hidden" name="fecha" value="${fechaInput}">
+      <div class="grid">
+        ${cajaColumn('entrada', 'Entradas', entradas, totalEntradas)}
+        ${cajaColumn('salida', 'Salidas', salidas, totalSalidas)}
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:1.5rem;flex-wrap:wrap;margin-top:0.85rem;border-top:2px solid var(--paper-border);padding-top:0.75rem;font-size:1.05rem">
+        <p style="margin:0">Total Neto: <strong data-neto>${formatArs(totalNeto)}</strong></p>
+        <p style="margin:0">Total del día: <strong data-dia>${formatArs(totalDia)}</strong></p>
+      </div>
+      <button type="submit">Guardá el resumen</button>
+    </form>`;
 
   return render(
     c,
     'Caja diaria',
     `<div class="card">
-      <h1>Caja diaria</h1>
-      <p class="muted">Una caja por tienda y día. Al cerrar, la diferencia se calcula como contado menos declarado.</p>
-      ${filterBar('/operativa/caja', fecha, storesHtml)}
-      <a class="btn" href="/operativa/caja/nuevo">Cargá la apertura</a>
-      <table class="papel" style="margin-top:0.75rem">
-        <thead><tr>
-          <th style="${TH}">Fecha</th>
-          <th style="${TH}">Estado</th>
-          <th style="${TH}">Apertura</th>
-          <th style="${TH}">Declarado</th>
-          <th style="${TH}">Contado</th>
-          <th style="${TH}">Diferencia</th>
-          <th style="${TH}">Acciones</th>
-        </tr></thead>
-        <tbody>${bodyRows || `<tr><td colspan="7" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
-      </table>
-    </div>`,
-    { notice: aviso(c, 'Rendición guardada.') },
+      ${cabecera}
+      ${resumen}
+    </div>
+    ${controlCajaHtml(cash, fechaInput)}
+    ${historialHtml(historial)}
+    ${CAJA_SCRIPT}`,
+    { notice: aviso(c, 'Resumen de caja guardado.') },
   );
+});
+
+operativaRoutes.post('/operativa/caja/lineas', async (c) => {
+  const db = dbOf(c);
+  // `all: true` para que las claves repetidas (entrada_d[], entrada_i[], etc.)
+  // vengan como array en vez de quedarse sólo con el último valor.
+  const body = await c.req.parseBody({ all: true });
+  const access = await resolveStore(c, db, body.tienda);
+  if ('error' in access) return denied(c, access.error);
+  const fecha = dayStart(str(body.fecha));
+  if (!fecha) {
+    return fail(
+      c,
+      'Caja diaria',
+      'Ingresá una fecha válida (AAAA-MM-DD).',
+      '/operativa/caja',
+    );
+  }
+  const back = `/operativa/caja?fecha=${dateInput(fecha)}`;
+
+  const lados: Array<{ side: CajaSide; detalles: string[]; importes: string[] }> = [
+    { side: 'entrada', detalles: asList(body.entrada_d), importes: asList(body.entrada_i) },
+    { side: 'salida', detalles: asList(body.salida_d), importes: asList(body.salida_i) },
+  ];
+
+  const filas: CajaLine[] = [];
+  for (const lado of lados) {
+    const n = Math.max(lado.detalles.length, lado.importes.length);
+    if (n > CAJA_MAX_FILAS) {
+      return fail(
+        c,
+        'Caja diaria',
+        `Cada columna admite hasta ${CAJA_MAX_FILAS} filas.`,
+        back,
+      );
+    }
+    for (let i = 0; i < n; i += 1) {
+      const detalle = (lado.detalles[i] ?? '').trim();
+      const importe = (lado.importes[i] ?? '').trim();
+      if (!detalle && !importe) continue;
+      if (!detalle) {
+        return fail(
+          c,
+          'Caja diaria',
+          'Ingresá el detalle de cada fila que tenga importe.',
+          back,
+        );
+      }
+      if (detalle.length > 80) {
+        return fail(
+          c,
+          'Caja diaria',
+          'El detalle de cada fila tiene hasta 80 caracteres.',
+          back,
+        );
+      }
+      if (!importe) {
+        return fail(
+          c,
+          'Caja diaria',
+          `Ingresá el importe de "${detalle}".`,
+          back,
+        );
+      }
+      const cents = centsFrom(importe);
+      if (cents === null) {
+        return fail(
+          c,
+          'Caja diaria',
+          `El importe de "${detalle}" no es un monto válido en pesos.`,
+          back,
+        );
+      }
+      filas.push({ side: lado.side, detail: detalle, amountCents: cents });
+    }
+  }
+
+  await db
+    .delete(cashLines)
+    .where(
+      and(
+        eq(cashLines.storeId, access.storeId),
+        eq(cashLines.reportDate, fecha),
+      ),
+    );
+  if (filas.length > 0) {
+    await db.insert(cashLines).values(
+      filas.map((f, i) => ({
+        storeId: access.storeId,
+        reportDate: fecha,
+        side: f.side,
+        sort: i,
+        detail: f.detail,
+        amountCents: f.amountCents,
+      })),
+    );
+  }
+  return c.redirect(`${back}&aviso=1`);
 });
 
 function randomRaffleCode(): string {
@@ -885,7 +1167,9 @@ operativaRoutes.post('/operativa/caja/:id/cerrar', async (c) => {
       ...(notas ? { notes: notas } : {}),
     })
     .where(eq(cashDays.id, id));
-  return c.redirect('/operativa/caja?aviso=1');
+  return c.redirect(
+    `/operativa/caja?fecha=${dateInput(row.reportDate)}&aviso=1`,
+  );
 });
 
 operativaRoutes.get('/operativa/ventas', async (c) => {

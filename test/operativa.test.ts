@@ -198,55 +198,97 @@ describe('operativa', () => {
     const fecha = '2026-11-09';
     const dia = Date.UTC(2026, 10, 9);
 
+    // 1. Abrir caja con apertura = 200
     const abierta = await post('/operativa/caja', { fecha, apertura: '200' }, cookie);
     expect(abierta.status).toBe(302);
 
+    // 2. Cargar turnos de ventas (morning/evening/night) que alimentan el resumen
+    await env.DB.prepare(`
+      insert into sales_summaries (store_id, report_date, shift, cash_cents, card_cents, transfer_cents, credit_cents, total_cents, notes)
+      values (1, ?, 'morning', 0, 0, 0, 0, 100000, 'test'),
+             (1, ?, 'evening', 0, 0, 0, 0, 200000, 'test'),
+             (1, ?, 'night', 0, 0, 0, 0, 50000, 'test')
+    `).bind(dia, dia, dia).run();
+
+    // 3. Guardar movimientos manuales vía nueva pantalla
     const guardado = await post(
-      '/operativa/caja/lineas',
+      '/operativa/caja/movimientos',
       {
         fecha,
-        entrada_d: ['Saldo día anterior', 'Turno mañana'],
-        entrada_i: ['1000', '250.50'],
-        salida_d: ['Venta M Pago'],
-        salida_i: ['100'],
+        entrada_d: ['Banco', 'Monedas'],
+        entrada_i: ['1500', '50'],
+        entrada_t: ['cuenta', 'cuenta'],
+        entrada_s: ['0', '1'],
+        salida_d: ['ARCA', 'Uniformes'],
+        salida_i: ['1000', '200'],
+        salida_t: ['referencia', 'movimiento'],
+        salida_s: ['0', '1'],
       },
       cookie,
     );
     expect(guardado.status).toBe(302);
     expect(guardado.headers.get('location')).toBe(
-      '/operativa/caja?fecha=2026-11-09&aviso=1',
+      '/operativa/caja/movimientos?fecha=2026-11-09&aviso=1',
     );
 
+    // Verificar que se guardaron 4 líneas (2 entradas + 2 salidas)
     const filas = await env.DB.prepare(
       'select count(*) as n from cash_lines where report_date = ?',
     )
       .bind(dia)
       .first<{ n: number }>();
-    expect(filas?.n).toBe(3);
+    expect(filas?.n).toBe(4);
 
+    // 4. Ver el resumen (solo lectura)
     const vista = await get(`/operativa/caja?fecha=${fecha}`, cookie);
     expect(vista.status).toBe(200);
     const html = await vista.text();
+
+    // Verificar estructura del resumen
     expect(html).toContain('>Entradas<');
     expect(html).toContain('>Salidas<');
     expect(html).toContain('Total Entradas');
     expect(html).toContain('Total Salidas');
     expect(html).toContain('Total Neto');
     expect(html).toContain('Total del día');
-    expect(html).toContain('Saldo día anterior');
-    expect(html).toContain('1.250,50'); // total entradas
-    expect(html).toContain('100,00'); // total salidas
-    expect(html).toContain('1.150,50'); // total neto
-    expect(html).toContain('1.350,50'); // total del día
+    expect(html).toContain('SALDO DÍA ANTERIOR');
+    expect(html).toContain('TURNO MAÑANA');
+    expect(html).toContain('TURNO TARDE');
+    expect(html).toContain('TURNO NOCHE');
+    expect(html).toContain('TOTAL TURNOS');
+    expect(html).toContain('BANCO (cuenta)');
+    expect(html).toContain('MONEDAS (cuenta)');
+    expect(html).toContain('ARCA (ref.)');
+    expect(html).toContain('UNIFORMES');
 
+    // Fórmulas:
+    // prevOpening = 200
+    // totalTurnos = 1000 + 2000 + 500 = 3500
+    // entradasManuales = 0 (Banco y Monedas son 'cuenta', no suman en Entradas)
+    // totalEntradas = 200 + 3500 + 0 = 3700
+    // salidasManuales = 200 (solo Uniformes, 'movimiento')
+    // totalSalidas = 200 (ARCA es 'referencia', no suma)
+    // totalDia = 3700 - 200 = 3500
+    // totalCuentas = 1500 + 50 = 1550
+    // totalNeto = 3500 - 1550 = 1950
+    expect(html).toContain('3.700,00'); // Total Entradas
+    expect(html).toContain('200,00');   // Total Salidas
+    expect(html).toContain('3.500,00'); // Total del día
+    expect(html).toContain('1.950,00'); // Total Neto
+
+    // 5. Reemplazo total (borra y vuelve a insertar)
     const reemplazo = await post(
-      '/operativa/caja/lineas',
+      '/operativa/caja/movimientos',
       {
         fecha,
-        entrada_d: ['Banco'],
-        entrada_i: ['50'],
+        entrada_d: ['Nuevo Banco'],
+        entrada_i: ['500'],
+        entrada_t: ['cuenta'],
+        entrada_s: ['0'],
         salida_d: [''],
         salida_i: [''],
+        salida_t: [''],
+        salida_s: [''],
       },
       cookie,
     );
@@ -258,8 +300,9 @@ describe('operativa', () => {
       .first<{ n: number }>();
     expect(despues?.n).toBe(1);
 
+    // 6. Validaciones
     const sinDetalle = await post(
-      '/operativa/caja/lineas',
+      '/operativa/caja/movimientos',
       { fecha, entrada_d: [''], entrada_i: ['10'] },
       cookie,
     );
@@ -272,18 +315,33 @@ describe('operativa', () => {
     expect(sigueUno?.n).toBe(1);
 
     const negativo = await post(
-      '/operativa/caja/lineas',
+      '/operativa/caja/movimientos',
       { fecha, entrada_d: ['x'], entrada_i: ['-1'] },
       cookie,
     );
     expect(negativo.status).toBe(422);
 
     const fechaMala = await post(
-      '/operativa/caja/lineas',
+      '/operativa/caja/movimientos',
       { fecha: 'no-es-fecha', entrada_d: ['x'], entrada_i: ['1'] },
       cookie,
     );
     expect(fechaMala.status).toBe(422);
+
+    // 7. 403 para cliente en la pantalla de movimientos
+    const cookieCliente = await registerAs(
+      'Cliente Caja',
+      uniqueEmail('cliente-caja'),
+      'customer',
+    );
+    const movAntes = await count('cash_lines');
+    const mov403 = await post(
+      '/operativa/caja/movimientos',
+      { fecha: '2026-11-10', entrada_d: ['x'], entrada_i: ['10'] },
+      cookieCliente,
+    );
+    expect(mov403.status).toBe(403);
+    expect(await count('cash_lines')).toBe(movAntes);
   });
 
   it('ventas: crear, listar y editar recalculando el total', async () => {

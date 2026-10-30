@@ -452,6 +452,7 @@ export const SHIFT_VALUES = ['morning', 'evening', 'night'] as const;
 export const CASH_STATUS_VALUES = ['open', 'closed'] as const;
 
 export const CASH_SIDE_VALUES = ['entrada', 'salida'] as const;
+export const CASH_KIND_VALUES = ['movimiento', 'cuenta', 'referencia'] as const;
 
 export const FUEL_PRODUCT_VALUES = ['nafta', 'gasoil', 'diesel', 'gnc'] as const;
 
@@ -504,6 +505,7 @@ export const cashLines = sqliteTable(
       .references(() => stores.id, { onDelete: 'cascade' }),
     reportDate: integer('report_date', { mode: 'timestamp_ms' }).notNull(),
     side: text('side', { enum: CASH_SIDE_VALUES }).notNull(),
+    kind: text('kind', { enum: CASH_KIND_VALUES }).notNull().default('movimiento'),
     sort: integer('sort').notNull().default(0),
     detail: text('detail').notNull(),
     amountCents: integer('amount_cents').notNull().default(0),
@@ -517,7 +519,9 @@ export const cashLines = sqliteTable(
       t.side,
       t.sort,
     ),
+    kindIdx: index('cash_lines_kind_idx').on(t.kind),
     sideChk: check('cash_lines_side_chk', sql`side in ('entrada','salida')`),
+    kindChk: check('cash_lines_kind_chk', sql`kind in ('movimiento','cuenta','referencia')`),
     amountChk: check('cash_lines_amount_chk', sql`amount_cents >= 0`),
     detailChk: check('cash_lines_detail_chk', sql`length(trim(detail)) > 0`),
   }),

@@ -422,12 +422,13 @@ operativaRoutes.get('/operativa', async (c) => {
   );
 });
 
-const CAJA_MIN_FILAS = 6;
 const CAJA_MAX_FILAS = 60;
 
 type CajaSide = 'entrada' | 'salida';
-type CajaLine = { side: CajaSide; detail: string; amountCents: number };
+type CajaKind = 'movimiento' | 'cuenta' | 'referencia';
 type CashRow = typeof cashDays.$inferSelect;
+type LineRow = typeof cashLines.$inferSelect;
+type SalesRow = typeof salesSummaries.$inferSelect;
 
 function dateInput(d: Date): string {
   return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
@@ -445,35 +446,47 @@ function asList(v: unknown): string[] {
   return typeof v === 'string' ? [v] : [];
 }
 
-function cajaRow(side: CajaSide, detail: string, amount: string): string {
+function movimientoRow(
+  side: CajaSide,
+  kind: CajaKind,
+  detail: string,
+  amount: string,
+  sort: number,
+): string {
+  const kindLabel = kind === 'cuenta' ? ' (cuenta)' : kind === 'referencia' ? ' (ref.)' : '';
+  const kindHidden = `<input type="hidden" name="${side}_k" value="${kind}">`;
+  const sortHidden = `<input type="hidden" name="${side}_s" value="${sort}">`;
   return `<tr>
-      <td><input class="campo-subrayado" type="text" name="${side}_d" value="${escapeHtml(detail)}" placeholder="Detalle" maxlength="80" aria-label="Detalle"></td>
+      <td>${kindHidden}${sortHidden}<input class="campo-subrayado" type="text" name="${side}_d" value="${escapeHtml(detail)}" placeholder="Detalle" maxlength="80" aria-label="Detalle"></td>
       <td class="num" style="white-space:nowrap">
-        <span style="display:inline-flex;gap:0.4rem;align-items:center;justify-content:flex-end">
-          <input class="campo-subrayado" type="number" name="${side}_i" value="${amount}" min="0" step="0.01" inputmode="decimal" placeholder="0" style="text-align:right;max-width:7.5rem" aria-label="Importe">
-          <button type="button" class="quitar" title="Quitar fila" aria-label="Quitar fila" style="margin-top:0;padding:0.05rem 0.5rem;font-size:0.8rem;line-height:1.5;background:transparent;color:#57534e;border:1px solid #d4d4d4;border-radius:999px">×</button>
-        </span>
+        <select name="${side}_t" class="campo-subrayado" style="width:auto;min-width:8rem;margin-right:0.4rem;font-size:0.8rem">
+          <option value="movimiento"${kind === 'movimiento' ? ' selected' : ''}>Movimiento</option>
+          <option value="cuenta"${kind === 'cuenta' ? ' selected' : ''}>Cuenta</option>
+          <option value="referencia"${kind === 'referencia' ? ' selected' : ''}>Referencia</option>
+        </select>
+        <input class="campo-subrayado" type="number" name="${side}_i" value="${amount}" min="0" step="0.01" inputmode="decimal" placeholder="0" style="text-align:right;max-width:7.5rem" aria-label="Importe">
+        <button type="button" class="quitar" title="Quitar fila" aria-label="Quitar fila" style="margin-top:0;padding:0.05rem 0.5rem;font-size:0.8rem;line-height:1.5;background:transparent;color:#57534e;border:1px solid #d4d4d4;border-radius:999px">×</button>
       </td>
     </tr>`;
 }
 
-function cajaColumn(
+function movimientoColumn(
   side: CajaSide,
   title: string,
-  lines: CajaLine[],
+  lines: Array<{ detail: string; amountCents: number; kind: CajaKind }>,
   totalCents: number,
 ): string {
-  const cells = lines.map((l) =>
-    cajaRow(side, l.detail, (l.amountCents / 100).toFixed(2)),
+  const cells = lines.map((l, idx) =>
+    movimientoRow(side, l.kind, l.detail, (l.amountCents / 100).toFixed(2), idx),
   );
-  for (let i = lines.length; i < CAJA_MIN_FILAS; i += 1) {
-    cells.push(cajaRow(side, '', ''));
+  for (let i = lines.length; i < 6; i += 1) {
+    cells.push(movimientoRow(side, 'movimiento', '', '', i));
   }
   return `<section>
       <table class="papel" data-side="${side}">
         <thead>
           <tr><th class="seccion" colspan="2" style="text-align:center">${title}</th></tr>
-          <tr><th>Detalle</th><th style="text-align:right">Total</th></tr>
+          <tr><th>Detalle</th><th style="text-align:right">Importe · Tipo</th></tr>
         </thead>
         <tbody>${cells.join('')}</tbody>
         <tfoot><tr>
@@ -553,60 +566,7 @@ function historialHtml(rows: CashRow[]): string {
     </details>`;
 }
 
-const CAJA_SCRIPT = `<script>
-(function () {
-  var form = document.getElementById('form-caja');
-  if (!form) return;
-  var fmt = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' });
-  function cents(input) {
-    var v = parseFloat(String(input.value).replace(',', '.'));
-    return isFinite(v) && v > 0 ? Math.round(v * 100) : 0;
-  }
-  function recalc() {
-    var e = 0, s = 0;
-    Array.prototype.forEach.call(form.querySelectorAll('table[data-side]'), function (t) {
-      Array.prototype.forEach.call(t.querySelectorAll('tbody tr'), function (tr) {
-        var input = tr.querySelector('input[type="number"]');
-        var c = input ? cents(input) : 0;
-        if (t.getAttribute('data-side') === 'entrada') e += c; else s += c;
-      });
-    });
-    form.querySelector('[data-total="entrada"]').textContent = fmt.format(e / 100);
-    form.querySelector('[data-total="salida"]').textContent = fmt.format(s / 100);
-    form.querySelector('[data-neto]').textContent = fmt.format((e - s) / 100);
-    form.querySelector('[data-dia]').textContent = fmt.format((e + s) / 100);
-  }
-  function bindRow(tr) {
-    tr.addEventListener('input', recalc);
-    var btn = tr.querySelector('.quitar');
-    if (!btn) return;
-    btn.addEventListener('click', function () {
-      var tbody = tr.parentNode;
-      if (tbody.querySelectorAll('tr').length <= 1) {
-        Array.prototype.forEach.call(tr.querySelectorAll('input'), function (i) { i.value = ''; });
-      } else {
-        tbody.removeChild(tr);
-      }
-      recalc();
-    });
-  }
-  Array.prototype.forEach.call(form.querySelectorAll('tbody tr'), bindRow);
-  Array.prototype.forEach.call(form.querySelectorAll('[data-add]'), function (btn) {
-    btn.addEventListener('click', function () {
-      var tbody = form.querySelector('table[data-side="' + btn.getAttribute('data-add') + '"] tbody');
-      var template = tbody.querySelector('tr').cloneNode(true);
-      Array.prototype.forEach.call(template.querySelectorAll('input'), function (i) { i.value = ''; });
-      tbody.appendChild(template);
-      bindRow(template);
-      var first = template.querySelector('input[type="text"]');
-      if (first) first.focus();
-      recalc();
-    });
-  });
-  recalc();
-})();
-</script>`;
-
+// ---------- RESUMEN DE CAJA (solo lectura) ----------
 operativaRoutes.get('/operativa/caja', async (c) => {
   const db = dbOf(c);
   const access = await resolveStore(c, db, c.req.query('tienda'));
@@ -619,7 +579,7 @@ operativaRoutes.get('/operativa/caja', async (c) => {
   const selected = day ?? utcToday();
   const fechaInput = dateInput(selected);
 
-  const [cashRows, lineRows, historial] = await Promise.all([
+  const [cashRows, lineRows, turnos, historial] = await Promise.all([
     db
       .select()
       .from(cashDays)
@@ -643,6 +603,17 @@ operativaRoutes.get('/operativa/caja', async (c) => {
       .orderBy(asc(cashLines.sort), asc(cashLines.id)),
     db
       .select()
+      .from(salesSummaries)
+      .where(
+        and(
+          eq(salesSummaries.storeId, access.storeId),
+          gte(salesSummaries.reportDate, selected),
+          lt(salesSummaries.reportDate, nextDay(selected)),
+        ),
+      )
+      .orderBy(asc(salesSummaries.shift)),
+    db
+      .select()
       .from(cashDays)
       .where(eq(cashDays.storeId, access.storeId))
       .orderBy(desc(cashDays.reportDate), desc(cashDays.id))
@@ -650,12 +621,30 @@ operativaRoutes.get('/operativa/caja', async (c) => {
   ]);
 
   const cash = cashRows[0];
-  const entradas = lineRows.filter((l) => l.side === 'entrada');
-  const salidas = lineRows.filter((l) => l.side === 'salida');
-  const totalEntradas = entradas.reduce((acc, l) => acc + l.amountCents, 0);
-  const totalSalidas = salidas.reduce((acc, l) => acc + l.amountCents, 0);
-  const totalNeto = totalEntradas - totalSalidas;
-  const totalDia = totalEntradas + totalSalidas;
+  const prevOpening = cash ? cash.openingCents : 0;
+
+  // Turnos: morning, evening, night → total_cents
+  const turnoManana = turnos.find(t => t.shift === 'morning');
+  const turnoTarde = turnos.find(t => t.shift === 'evening');
+  const turnoNoche = turnos.find(t => t.shift === 'night');
+  const totalTurnos = (turnoManana?.totalCents ?? 0) + (turnoTarde?.totalCents ?? 0) + (turnoNoche?.totalCents ?? 0);
+
+  // Líneas manuales
+  const entradasManuales = lineRows.filter(l => l.side === 'entrada' && l.kind === 'movimiento');
+  const salidasManuales = lineRows.filter(l => l.side === 'salida' && l.kind === 'movimiento');
+  const cuentas = lineRows.filter(l => l.side === 'entrada' && l.kind === 'cuenta');
+  const referencias = lineRows.filter(l => l.side === 'salida' && l.kind === 'referencia');
+
+  const totalEntradasManuales = entradasManuales.reduce((a, l) => a + l.amountCents, 0);
+  const totalSalidasManuales = salidasManuales.reduce((a, l) => a + l.amountCents, 0);
+  const totalCuentas = cuentas.reduce((a, l) => a + l.amountCents, 0);
+  // totalReferencias = referencias.reduce((a, l) => a + l.amountCents, 0); // no se usa en totales
+
+  // Fórmulas del printeo legacy
+  const totalEntradas = prevOpening + totalTurnos + totalEntradasManuales; // BANCO (cuentas) NO suma
+  const totalSalidas = totalSalidasManuales; // referencias NO suman
+  const totalDia = totalEntradas - totalSalidas;
+  const totalNeto = totalDia - totalCuentas; // restar BANCO/cuentas
 
   const cabecera = `<div class="cabecera-papel" style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap">
       <h1>Caja</h1>
@@ -666,18 +655,53 @@ operativaRoutes.get('/operativa/caja', async (c) => {
       <p class="sub" style="margin:0">Fecha: <strong>${fmtDay(selected)}</strong>${cash ? ` · <span class="pill"${cash.status === 'closed' ? ' style="background:#57534e"' : ''}>${cash.status === 'open' ? 'Abierta' : 'Cerrada'}</span>` : ''}</p>
     </div>`;
 
-  const resumen = `<form method="post" action="/operativa/caja/lineas" id="form-caja">
-      <input type="hidden" name="fecha" value="${fechaInput}">
-      <div class="grid">
-        ${cajaColumn('entrada', 'Entradas', entradas, totalEntradas)}
-        ${cajaColumn('salida', 'Salidas', salidas, totalSalidas)}
-      </div>
-      <div style="display:flex;justify-content:flex-end;gap:1.5rem;flex-wrap:wrap;margin-top:0.85rem;border-top:2px solid var(--paper-border);padding-top:0.75rem;font-size:1.05rem">
-        <p style="margin:0">Total Neto: <strong data-neto>${formatArs(totalNeto)}</strong></p>
-        <p style="margin:0">Total del día: <strong data-dia>${formatArs(totalDia)}</strong></p>
-      </div>
-      <button type="submit">Guardá el resumen</button>
-    </form>`;
+  // Filas de entrada para la tabla de solo lectura
+  const entradasRows = [
+    { label: 'SALDO DÍA ANTERIOR', amount: prevOpening, isSubtotal: false },
+    { label: 'TURNO MAÑANA', amount: turnoManana?.totalCents ?? 0, isSubtotal: false },
+    { label: 'TURNO TARDE', amount: turnoTarde?.totalCents ?? 0, isSubtotal: false },
+    { label: 'TURNO NOCHE', amount: turnoNoche?.totalCents ?? 0, isSubtotal: false },
+    { label: 'TOTAL TURNOS', amount: totalTurnos, isSubtotal: true },
+  ].concat(
+    entradasManuales.map(l => ({ label: l.detail.toUpperCase(), amount: l.amountCents, isSubtotal: false })),
+    cuentas.map(l => ({ label: l.detail.toUpperCase() + ' (cuenta)', amount: l.amountCents, isSubtotal: false })),
+  );
+
+  const salidasRows = [
+    ...salidasManuales.map(l => ({ label: l.detail.toUpperCase(), amount: l.amountCents, isSubtotal: false })),
+    ...referencias.map(l => ({ label: l.detail.toUpperCase() + ' (ref.)', amount: l.amountCents, isSubtotal: false })),
+  ];
+
+  function renderColumn(title: string, rows: Array<{ label: string; amount: number; isSubtotal?: boolean }>, totalCents: number): string {
+    const cells = rows.map(r => `
+      <tr${r.isSubtotal ? ' style="background:var(--paper-head)"' : ''}>
+        <td${r.isSubtotal ? ' style="font-weight:700;text-transform:uppercase;font-size:0.8rem;letter-spacing:0.05em"' : ''}>${escapeHtml(r.label)}</td>
+        <td class="num"${r.isSubtotal ? ' style="font-weight:700"' : ''}>${formatArs(r.amount)}</td>
+      </tr>`).join('');
+    return `<section>
+      <table class="papel" data-side="${title.toLowerCase()}">
+        <thead>
+          <tr><th class="seccion" colspan="2" style="text-align:center">${title}</th></tr>
+          <tr><th>Detalle</th><th style="text-align:right">Total</th></tr>
+        </thead>
+        <tbody>${cells}</tbody>
+        <tfoot><tr>
+          <td class="seccion">Total ${title}</td>
+          <td class="num"><strong>${formatArs(totalCents)}</strong></td>
+        </tr></tfoot>
+      </table>
+    </section>`;
+  }
+
+  const resumen = `<div class="grid">
+      ${renderColumn('Entradas', entradasRows, totalEntradas)}
+      ${renderColumn('Salidas', salidasRows, totalSalidas)}
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:1.5rem;flex-wrap:wrap;margin-top:0.85rem;border-top:2px solid var(--paper-border);padding-top:0.75rem;font-size:1.05rem">
+      <p style="margin:0">Total del día: <strong>${formatArs(totalDia)}</strong></p>
+      <p style="margin:0">Total Neto: <strong>${formatArs(totalNeto)}</strong></p>
+    </div>
+    <p class="muted" style="margin-top:0.5rem;font-size:0.85rem">Las filas se editan en <a href="/operativa/caja/movimientos?fecha=${fechaInput}">Movimientos de caja</a>.</p>`;
 
   return render(
     c,
@@ -687,16 +711,155 @@ operativaRoutes.get('/operativa/caja', async (c) => {
       ${resumen}
     </div>
     ${controlCajaHtml(cash, fechaInput)}
-    ${historialHtml(historial)}
-    ${CAJA_SCRIPT}`,
+    ${historialHtml(historial)}`,
     { notice: aviso(c, 'Resumen de caja guardado.') },
   );
 });
 
-operativaRoutes.post('/operativa/caja/lineas', async (c) => {
+// ---------- MOVIMIENTOS DE CAJA (carga/edición) ----------
+operativaRoutes.get('/operativa/caja/movimientos', async (c) => {
   const db = dbOf(c);
-  // `all: true` para que las claves repetidas (entrada_d[], entrada_i[], etc.)
-  // vengan como array en vez de quedarse sólo con el último valor.
+  const access = await resolveStore(c, db, c.req.query('tienda'));
+  if ('error' in access) return denied(c, access.error);
+  const fecha = str(c.req.query('fecha'));
+  const day = fecha ? dayStart(fecha) : null;
+  if (fecha && !day) {
+    return fail(c, 'Movimientos de caja', 'Ingresá una fecha válida.', '/operativa/caja/movimientos');
+  }
+  const selected = day ?? utcToday();
+  const fechaInput = dateInput(selected);
+
+  const [cashRows, lineRows] = await Promise.all([
+    db
+      .select()
+      .from(cashDays)
+      .where(
+        and(
+          eq(cashDays.storeId, access.storeId),
+          gte(cashDays.reportDate, selected),
+          lt(cashDays.reportDate, nextDay(selected)),
+        ),
+      )
+      .limit(1),
+    db
+      .select()
+      .from(cashLines)
+      .where(
+        and(
+          eq(cashLines.storeId, access.storeId),
+          eq(cashLines.reportDate, selected),
+        ),
+      )
+      .orderBy(asc(cashLines.sort), asc(cashLines.id)),
+  ]);
+
+  const cash = cashRows[0];
+  const entradas = lineRows.filter(l => l.side === 'entrada').map(l => ({
+    detail: l.detail,
+    amountCents: l.amountCents,
+    kind: l.kind as CajaKind,
+  }));
+  const salidas = lineRows.filter(l => l.side === 'salida').map(l => ({
+    detail: l.detail,
+    amountCents: l.amountCents,
+    kind: l.kind as CajaKind,
+  }));
+
+  const totalEntradas = entradas.reduce((a, l) => a + l.amountCents, 0);
+  const totalSalidas = salidas.reduce((a, l) => a + l.amountCents, 0);
+
+  const cabecera = `<div class="cabecera-papel" style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap">
+      <h1>Movimientos de caja</h1>
+      <form method="get" action="/operativa/caja/movimientos" class="row" style="gap:0.5rem;align-items:center">
+        <input type="date" name="fecha" value="${fechaInput}" style="width:auto;margin-top:0" aria-label="Fecha">
+        <button type="submit" style="${SMALL_BTN}">Mostrá</button>
+      </form>
+      <p class="sub" style="margin:0">Fecha: <strong>${fmtDay(selected)}</strong></p>
+    </div>`;
+
+  const formHtml = `<form method="post" action="/operativa/caja/movimientos" id="form-movimientos">
+      <input type="hidden" name="fecha" value="${fechaInput}">
+      <div class="grid">
+        ${movimientoColumn('entrada', 'Entradas', entradas, totalEntradas)}
+        ${movimientoColumn('salida', 'Salidas', salidas, totalSalidas)}
+      </div>
+      <p class="muted" style="font-size:0.85rem;margin-top:0.5rem">
+        <strong>Movimiento</strong> = suma en su columna |
+        <strong>Cuenta</strong> (BANCO/monedas/ahorro) = no suma en Entradas, resta en Total Neto |
+        <strong>Referencia</strong> (Venta M Pago) = se muestra pero no suma en Salidas
+      </p>
+      <button type="submit">Guardá los movimientos</button>
+    </form>`;
+
+  const movScript = `<script>
+(function () {
+  var form = document.getElementById('form-movimientos');
+  if (!form) return;
+  var fmt = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' });
+  function cents(input) {
+    var v = parseFloat(String(input.value).replace(',', '.'));
+    return isFinite(v) && v > 0 ? Math.round(v * 100) : 0;
+  }
+  function recalc() {
+    var e = 0, s = 0;
+    Array.prototype.forEach.call(form.querySelectorAll('table[data-side]'), function (t) {
+      Array.prototype.forEach.call(t.querySelectorAll('tbody tr'), function (tr) {
+        var input = tr.querySelector('input[type="number"]');
+        var c = input ? cents(input) : 0;
+        if (t.getAttribute('data-side') === 'entrada') e += c; else s += c;
+      });
+    });
+    form.querySelector('[data-total="entrada"]').textContent = fmt.format(e / 100);
+    form.querySelector('[data-total="salida"]').textContent = fmt.format(s / 100);
+  }
+  function bindRow(tr) {
+    tr.addEventListener('input', recalc);
+    var btn = tr.querySelector('.quitar');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      var tbody = tr.parentNode;
+      if (tbody.querySelectorAll('tr').length <= 1) {
+        Array.prototype.forEach.call(tr.querySelectorAll('input'), function (i) { i.value = ''; });
+        tr.querySelector('select').value = 'movimiento';
+      } else {
+        tbody.removeChild(tr);
+      }
+      recalc();
+    });
+  }
+  Array.prototype.forEach.call(form.querySelectorAll('tbody tr'), bindRow);
+  Array.prototype.forEach.call(form.querySelectorAll('[data-add]'), function (btn) {
+    btn.addEventListener('click', function () {
+      var tbody = form.querySelector('table[data-side="' + btn.getAttribute('data-add') + '"] tbody');
+      var template = tbody.querySelector('tr').cloneNode(true);
+      Array.prototype.forEach.call(template.querySelectorAll('input'), function (i) { i.value = ''; });
+      template.querySelector('select').value = 'movimiento';
+      tbody.appendChild(template);
+      bindRow(template);
+      var first = template.querySelector('input[type="text"]');
+      if (first) first.focus();
+      recalc();
+    });
+  });
+  recalc();
+})();
+</script>`;
+
+  return render(
+    c,
+    'Movimientos de caja',
+    `<div class="card">
+      ${cabecera}
+      ${formHtml}
+    </div>
+    <p class="muted" style="margin-top:1rem"><a href="/operativa/caja?fecha=${fechaInput}">← Volver al resumen</a></p>
+    ${movScript}`,
+    { notice: aviso(c, 'Movimientos guardados.') },
+  );
+});
+
+operativaRoutes.post('/operativa/caja/movimientos', async (c) => {
+  const db = dbOf(c);
   const body = await c.req.parseBody({ all: true });
   const access = await resolveStore(c, db, body.tienda);
   if ('error' in access) return denied(c, access.error);
@@ -704,25 +867,25 @@ operativaRoutes.post('/operativa/caja/lineas', async (c) => {
   if (!fecha) {
     return fail(
       c,
-      'Caja diaria',
+      'Movimientos de caja',
       'Ingresá una fecha válida (AAAA-MM-DD).',
-      '/operativa/caja',
+      '/operativa/caja/movimientos',
     );
   }
-  const back = `/operativa/caja?fecha=${dateInput(fecha)}`;
+  const back = `/operativa/caja/movimientos?fecha=${dateInput(fecha)}`;
 
-  const lados: Array<{ side: CajaSide; detalles: string[]; importes: string[] }> = [
-    { side: 'entrada', detalles: asList(body.entrada_d), importes: asList(body.entrada_i) },
-    { side: 'salida', detalles: asList(body.salida_d), importes: asList(body.salida_i) },
+  const lados: Array<{ side: CajaSide; detalles: string[]; importes: string[]; tipos: string[]; sorts: string[] }> = [
+    { side: 'entrada', detalles: asList(body.entrada_d), importes: asList(body.entrada_i), tipos: asList(body.entrada_t), sorts: asList(body.entrada_s) },
+    { side: 'salida', detalles: asList(body.salida_d), importes: asList(body.salida_i), tipos: asList(body.salida_t), sorts: asList(body.salida_s) },
   ];
 
-  const filas: CajaLine[] = [];
+  const filas: Array<{ side: CajaSide; detail: string; amountCents: number; kind: CajaKind; sort: number }> = [];
   for (const lado of lados) {
-    const n = Math.max(lado.detalles.length, lado.importes.length);
+    const n = Math.max(lado.detalles.length, lado.importes.length, lado.tipos.length, lado.sorts.length);
     if (n > CAJA_MAX_FILAS) {
       return fail(
         c,
-        'Caja diaria',
+        'Movimientos de caja',
         `Cada columna admite hasta ${CAJA_MAX_FILAS} filas.`,
         back,
       );
@@ -730,11 +893,13 @@ operativaRoutes.post('/operativa/caja/lineas', async (c) => {
     for (let i = 0; i < n; i += 1) {
       const detalle = (lado.detalles[i] ?? '').trim();
       const importe = (lado.importes[i] ?? '').trim();
+      const tipo = (lado.tipos[i] ?? 'movimiento') as CajaKind;
+      const sort = parseInt(lado.sorts[i] ?? String(i), 10);
       if (!detalle && !importe) continue;
       if (!detalle) {
         return fail(
           c,
-          'Caja diaria',
+          'Movimientos de caja',
           'Ingresá el detalle de cada fila que tenga importe.',
           back,
         );
@@ -742,7 +907,7 @@ operativaRoutes.post('/operativa/caja/lineas', async (c) => {
       if (detalle.length > 80) {
         return fail(
           c,
-          'Caja diaria',
+          'Movimientos de caja',
           'El detalle de cada fila tiene hasta 80 caracteres.',
           back,
         );
@@ -750,7 +915,7 @@ operativaRoutes.post('/operativa/caja/lineas', async (c) => {
       if (!importe) {
         return fail(
           c,
-          'Caja diaria',
+          'Movimientos de caja',
           `Ingresá el importe de "${detalle}".`,
           back,
         );
@@ -759,12 +924,20 @@ operativaRoutes.post('/operativa/caja/lineas', async (c) => {
       if (cents === null) {
         return fail(
           c,
-          'Caja diaria',
+          'Movimientos de caja',
           `El importe de "${detalle}" no es un monto válido en pesos.`,
           back,
         );
       }
-      filas.push({ side: lado.side, detail: detalle, amountCents: cents });
+      if (!['movimiento', 'cuenta', 'referencia'].includes(tipo)) {
+        return fail(
+          c,
+          'Movimientos de caja',
+          `Tipo "${tipo}" inválido.`,
+          back,
+        );
+      }
+      filas.push({ side: lado.side, detail: detalle, amountCents: cents, kind: tipo, sort });
     }
   }
 
@@ -778,11 +951,12 @@ operativaRoutes.post('/operativa/caja/lineas', async (c) => {
     );
   if (filas.length > 0) {
     await db.insert(cashLines).values(
-      filas.map((f, i) => ({
+      filas.map(f => ({
         storeId: access.storeId,
         reportDate: fecha,
         side: f.side,
-        sort: i,
+        kind: f.kind,
+        sort: f.sort,
         detail: f.detail,
         amountCents: f.amountCents,
       })),

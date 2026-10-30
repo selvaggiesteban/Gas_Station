@@ -320,6 +320,7 @@ function sidebarLinks(user: { name: string; points: number; role: string }): str
         { href: '/admin/desafios', label: 'Desafíos' },
         { href: '/admin/ordenes', label: 'Órdenes' },
         { href: '/operativa', label: 'Operativa' },
+        { href: '/operativa/caja/movimientos', label: 'Movimientos' },
         { href: '/ranking', label: 'Ranking' },
       ]
     : isGestor
@@ -327,6 +328,7 @@ function sidebarLinks(user: { name: string; points: number; role: string }): str
           { href: '/app', label: 'Inicio' },
           { href: '/tienda', label: 'Mi tienda' },
           { href: '/operativa', label: 'Operativa' },
+          { href: '/operativa/caja/movimientos', label: 'Movimientos' },
           { href: '/admin/ordenes', label: 'Órdenes' },
           { href: '/ranking', label: 'Ranking' },
         ]

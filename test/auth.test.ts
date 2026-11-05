@@ -129,14 +129,16 @@ describe('auth', () => {
     expect(html).not.toContain('#eb7716');
   });
 
-  it('las páginas autenticadas conservan el naranja de marca', async () => {
+  it('las páginas autenticadas son monocromas (sin naranja de marca)', async () => {
     const reg = await register('Naranja Prueba', 'naranja@test.com');
     const cookie = sessionCookie(reg);
     const app = await get('/app', cookie);
     expect(app.status).toBe(200);
     const html = await app.text();
     expect(html).not.toContain('class="public"');
-    expect(html).toContain('#eb7716');
+    expect(html).not.toContain('#eb7716');
+    expect(html).not.toContain('transition:');
+    expect(html).not.toContain('scroll-behavior');
   });
 
   it('/admin exige rol admin', async () => {

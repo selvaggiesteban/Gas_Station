@@ -52,7 +52,7 @@ function filtersHtml(rol: RolFilter): string {
     .map((r) =>
       r === rol
         ? `<span class="pill">${ROL_LABELS[r]}</span>`
-        : `<a href="/ranking?rol=${r}" style="color:#44403c">${ROL_LABELS[r]}</a>`,
+        : `<a href="/ranking?rol=${r}" style="color:#52525b">${ROL_LABELS[r]}</a>`,
     )
     .join(' ');
   return `<p class="row" style="margin:0 0 0.75rem">${pills}</p>`;
@@ -72,9 +72,9 @@ function rankRow(opts: {
   points: number;
   isMe: boolean;
 }): string {
-  const highlight = opts.isMe ? ';background:#fff7ed' : '';
+  const highlight = opts.isMe ? ';background:#f4f4f5' : '';
   const me = opts.isMe ? ' me' : '';
-  return `<div class="rank-row${me}" data-pos="${opts.position}" style="display:flex;justify-content:space-between;gap:0.75rem;align-items:center;padding:0.5rem 0.6rem;border-top:1px solid #e7e5e4${highlight}">
+  return `<div class="rank-row${me}" data-pos="${opts.position}" style="display:flex;justify-content:space-between;gap:0.75rem;align-items:center;padding:0.5rem 0.6rem;border-top:1px solid #e4e4e7${highlight}">
     <span><strong>${opts.position}</strong> ${escapeHtml(opts.name)}${opts.isMe ? ' <span class="pill">Vos</span>' : ''} <span class="muted">${roleLabel(opts.role)}</span></span>
     <span><strong>${opts.points} pts</strong></span>
   </div>`;

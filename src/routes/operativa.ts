@@ -467,7 +467,7 @@ function movimientoRow(
           <option value="referencia"${kind === 'referencia' ? ' selected' : ''}>Referencia</option>
         </select>
         <input class="campo-subrayado" type="number" name="${side}_i" value="${amount}" min="0" step="0.01" inputmode="decimal" placeholder="0" style="text-align:right;max-width:7.5rem" aria-label="Importe">
-        <button type="button" class="quitar" title="Quitar fila" aria-label="Quitar fila" style="margin-top:0;padding:0.05rem 0.5rem;font-size:0.8rem;line-height:1.5;background:transparent;color:#57534e;border:1px solid #d4d4d4;border-radius:999px">×</button>
+        <button type="button" class="quitar" title="Quitar fila" aria-label="Quitar fila" style="margin-top:0;padding:0.05rem 0.5rem;font-size:0.8rem;line-height:1.5;background:transparent;color:#52525b;border:1px solid #d4d4d4;border-radius:999px">×</button>
       </td>
     </tr>`;
 }
@@ -515,7 +515,7 @@ function controlCajaHtml(cash: CashRow | undefined, fechaInput: string): string 
       </form>
     </div>`;
   }
-  const resumen = `<p class="muted" style="margin:0 0 0.5rem">Estado: <span class="pill"${cash.status === 'closed' ? ' style="background:#57534e"' : ''}>${cash.status === 'open' ? 'Abierta' : 'Cerrada'}</span>
+  const resumen = `<p class="muted" style="margin:0 0 0.5rem">Estado: <span class="pill"${cash.status === 'closed' ? ' style="background:#52525b"' : ''}>${cash.status === 'open' ? 'Abierta' : 'Cerrada'}</span>
       · Apertura: <strong>${formatArs(cash.openingCents)}</strong>
       ${cash.closingDeclaredCents !== null ? ` · Declarado: <strong>${formatArs(cash.closingDeclaredCents)}</strong>` : ''}
       ${cash.closingCountedCents !== null ? ` · Contado: <strong>${formatArs(cash.closingCountedCents)}</strong>` : ''}
@@ -654,7 +654,7 @@ operativaRoutes.get('/operativa/caja', async (c) => {
         <input type="date" name="fecha" value="${fechaInput}" style="width:auto;margin-top:0" aria-label="Fecha">
         <button type="submit" style="${SMALL_BTN}">Mostrá</button>
       </form>
-      <p class="sub" style="margin:0">Fecha: <strong>${fmtDay(selected)}</strong>${cash ? ` · <span class="pill"${cash.status === 'closed' ? ' style="background:#57534e"' : ''}>${cash.status === 'open' ? 'Abierta' : 'Cerrada'}</span>` : ''}</p>
+      <p class="sub" style="margin:0">Fecha: <strong>${fmtDay(selected)}</strong>${cash ? ` · <span class="pill"${cash.status === 'closed' ? ' style="background:#52525b"' : ''}>${cash.status === 'open' ? 'Abierta' : 'Cerrada'}</span>` : ''}</p>
     </div>`;
 
   // Filas de entrada para la tabla de solo lectura
@@ -2603,7 +2603,7 @@ function readingsFormHtml(): string {
   const fuelOpts = `<option value="">—</option>` + fuelOptions();
   let out = '';
   for (let i = 0; i < READING_ROWS; i++) {
-    out += `<div class="row" style="border-top:1px solid #e7e5e4;padding-top:0.5rem;margin-top:0.5rem">
+    out += `<div class="row" style="border-top:1px solid #e4e4e7;padding-top:0.5rem;margin-top:0.5rem">
       <div style="flex:1;min-width:6rem">
         <label for="r${i}_surtidor">Surtidor</label>
         <select id="r${i}_surtidor" name="r${i}_surtidor">${surtidorOpts}</select>
@@ -2764,7 +2764,7 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
           </div>
           <div>
             <label for="gnc_sales">GNC - Importe (pesos)</label>
-            <input id="gnc_sales" name="gnc_sales" type="number" step="0.01" min="0" value="0" readonly style="background:#f5f5f5">
+            <input id="gnc_sales" name="gnc_sales" type="number" step="0.01" min="0" value="0" readonly style="background:#f4f4f5">
           </div>
           <div>
             <label for="lubricantes_qty">Lubricantes - Cantidad</label>
@@ -2776,7 +2776,7 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
           </div>
           <div>
             <label for="lubricantes_sales">Lubricantes - Importe (pesos)</label>
-            <input id="lubricantes_sales" name="lubricantes_sales" type="number" step="0.01" min="0" value="0" readonly style="background:#f5f5f5">
+            <input id="lubricantes_sales" name="lubricantes_sales" type="number" step="0.01" min="0" value="0" readonly style="background:#f4f4f5">
           </div>
           <div>
             <label for="varios_qty">Varios - Cantidad</label>
@@ -2788,11 +2788,11 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
           </div>
           <div>
             <label for="varios_sales">Varios - Importe (pesos)</label>
-            <input id="varios_sales" name="varios_sales" type="number" step="0.01" min="0" value="0" readonly style="background:#f5f5f5">
+            <input id="varios_sales" name="varios_sales" type="number" step="0.01" min="0" value="0" readonly style="background:#f4f4f5">
           </div>
           <div style="grid-column:1/-1">
             <label for="total_sales">Total ventas del turno (pesos)</label>
-            <input id="total_sales" name="total_sales" type="number" step="0.01" min="0" value="0" readonly style="background:#f5f5f5;font-weight:700;font-size:1.1rem">
+            <input id="total_sales" name="total_sales" type="number" step="0.01" min="0" value="0" readonly style="background:#f4f4f5;font-weight:700;font-size:1.1rem">
           </div>
         </div>
         
@@ -2849,7 +2849,7 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
           </div>
           <div style="grid-column:1/-1">
             <label for="total_ensobrado">Total ensobrado (pesos)</label>
-            <input id="total_ensobrado" name="total_ensobrado" type="number" step="0.01" min="0" value="0" readonly style="background:#f5f5f5;font-weight:700">
+            <input id="total_ensobrado" name="total_ensobrado" type="number" step="0.01" min="0" value="0" readonly style="background:#f4f4f5;font-weight:700">
           </div>
         </div>
         

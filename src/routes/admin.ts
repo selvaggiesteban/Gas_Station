@@ -570,7 +570,7 @@ adminRoutes.get('/admin/desafios', async (c) => {
   const tarjetas = rows
     .map(
       (ch) => `<div class="card">
-      <h2>${escapeHtml(ch.title)} ${ch.active ? '<span class="pill">Activo</span>' : '<span class="pill" style="background:#57534e">Inactivo</span>'}</h2>
+      <h2>${escapeHtml(ch.title)} ${ch.active ? '<span class="pill">Activo</span>' : '<span class="pill" style="background:#52525b">Inactivo</span>'}</h2>
       <p class="muted">${escapeHtml(ch.description || 'sin descripción')}</p>
       <p class="muted">Meta: ${GOAL_LABELS[ch.goalType]} ≥ ${ch.goalValue} · Ventana: ${fmtFecha(ch.startsAt)} → ${fmtFecha(ch.endsAt)} · Recompensa: ${ch.rewardPoints} pts</p>
       <form method="post" action="/admin/desafios/${ch.id}/activo" style="display:inline">
@@ -840,7 +840,7 @@ adminRoutes.get('/admin/ordenes', async (c) => {
       <td style="${TD}"><span class="pill">${ORDER_STATUS_LABELS[o.status] ?? o.status}</span></td>
       <td style="${TD}">${
         o.proofKey
-          ? `<a href="/admin/comprobantes/${o.id}"><img src="/admin/comprobantes/${o.id}" alt="Comprobante" style="height:2.5rem;border-radius:0.3rem;border:1px solid #e7e5e4;object-fit:cover"></a>`
+          ? `<a href="/admin/comprobantes/${o.id}"><img src="/admin/comprobantes/${o.id}" alt="Comprobante" style="height:2.5rem;border-radius:0.3rem;border:1px solid #e4e4e7;object-fit:cover"></a>`
           : '<span class="muted">No</span>'
       }</td>
       <td style="${TD}"><a class="btn secondary" href="/admin/ordenes/${o.id}" style="${SMALL_BTN}">Detalle</a></td>
@@ -968,7 +968,7 @@ adminRoutes.get('/admin/ordenes/:id', async (c) => {
 
   const proofHtml = order.proofKey
     ? `<p><a href="/admin/comprobantes/${order.id}">Ver comprobante</a></p>
-       <img src="/admin/comprobantes/${order.id}" alt="Comprobante" style="max-width:100%;border-radius:0.5rem;border:1px solid #e7e5e4;margin-top:0.5rem">`
+       <img src="/admin/comprobantes/${order.id}" alt="Comprobante" style="max-width:100%;border-radius:0.5rem;border:1px solid #e4e4e7;margin-top:0.5rem">`
     : '<p class="muted">Sin comprobante adjunto.</p>';
 
   const acciones =

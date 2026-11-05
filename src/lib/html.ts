@@ -15,25 +15,26 @@ const BASE_STYLE = `
   --muted: #71717a; --brand: #0a0a0a; --on-brand: #ffffff; --brand-contrast: #ffffff;
   --danger-bg: #18181b; --danger-fg: #ffffff; --danger-border: #18181b;
   --ok-bg: #f4f4f5; --ok-fg: #18181b; --ok-border: #a1a1aa;
-  --sidebar-bg: #f3f3f3; --sidebar-border: #d4d4d4; --paper-border: #0a0a0a;
-  --paper-head: #e4e4e7; --paper-row-alt: #f3f3f3; }
+  --sidebar-bg: #fafafa; --sidebar-border: #e4e4e7; --paper-border: #e4e4e7;
+  --paper-head: #f4f4f5; --paper-row-alt: #fafafa; }
 body.public { --brand: #0a0a0a; --on-brand: #ffffff; --brand-contrast: #ffffff; }
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
 body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   background: var(--bg); color: var(--fg); line-height: 1.5; }
 .wrap { max-width: 42rem; margin: 0 auto; padding: 1.5rem; }
 .card { background: var(--surface); border: 1px solid var(--border);
-  border-radius: 0.75rem; padding: 1.25rem; margin-bottom: 1rem; }
+  border-radius: 0.75rem; padding: 1.25rem; margin-bottom: 1rem; overflow-x: auto; }
 h1 { font-size: 1.35rem; margin: 0 0 0.75rem; }
 h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
 h3 { font-size: 1rem; margin: 0 0 0.35rem; }
 label { display: block; font-size: 0.875rem; font-weight: 600; margin: 0.75rem 0 0.25rem; }
 input, select, textarea { width: 100%; padding: 0.55rem 0.7rem; border: 1px solid var(--border);
   border-radius: 0.5rem; font: inherit; background: var(--surface); color: var(--fg); }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--fg); outline-offset: 1px; }
 button, .btn { display: inline-block; margin-top: 1rem; padding: 0.6rem 1.1rem; border: 0;
   border-radius: 0.5rem; background: var(--brand); color: var(--on-brand); font: inherit;
   font-weight: 600; cursor: pointer; text-decoration: none; }
+button:not(:disabled):hover, .btn:hover { opacity: 0.85; }
 button:disabled { opacity: 0.6; cursor: not-allowed; }
 button.secondary, .btn.secondary { background: #3f3f46; color: #ffffff; }
 .alert-error { background: var(--danger-bg); border: 1px solid var(--danger-border);
@@ -105,8 +106,7 @@ main.landing { max-width: 72rem; }
 /* --- Barra lateral (admin / store_manager) --- */
 .sidebar { position: fixed; top: 0; left: 0; width: 210px; height: 100vh;
   background: var(--sidebar-bg); border-right: 1px solid var(--sidebar-border);
-  padding-top: 1rem; padding-bottom: 1rem; overflow-y: auto; z-index: 50;
-  transition: transform 0.25s ease; }
+  padding-top: 1rem; padding-bottom: 1rem; overflow-y: auto; z-index: 50; }
 @media (max-width: 768px) {
   .sidebar { transform: translateX(-100%); }
   .sidebar.open { transform: translateX(0); }
@@ -125,8 +125,7 @@ main.landing { max-width: 72rem; }
   border-top: 1px solid var(--sidebar-border); margin-top: 0.75rem; }
 
 .sidebar-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100vh;
-  background: rgba(0,0,0,0.3); z-index: 49; opacity: 0; visibility: hidden;
-  transition: opacity 0.25s ease; }
+  background: rgba(0,0,0,0.3); z-index: 49; opacity: 0; visibility: hidden; }
 .sidebar-overlay.open { opacity: 1; visibility: visible; }
 
 .hamburger { display: none; position: fixed; top: 0.6rem; left: 0.75rem; z-index: 45;
@@ -154,37 +153,39 @@ main.landing { max-width: 72rem; }
   .home-cta .btn { width: 100%; }
 }
 
-/* --- Tablas tipo papel (formularios de estación) --- */
-table.papel { width: 100%; border-collapse: collapse; border: 2px solid var(--paper-border); }
-table.papel th { background: var(--paper-head); border: 1px solid var(--paper-border);
-  padding: 0.5rem 0.75rem; font-weight: 700; text-align: left; font-size: 0.8rem;
-  text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg); }
-table.papel td { border: 1px solid var(--paper-border); padding: 0.5rem 0.75rem;
-  font-size: 0.9rem; vertical-align: top; }
+/* --- Tablas de datos (formularios de estación) --- */
+table.papel { width: 100%; border-collapse: separate; border-spacing: 0;
+  border: 1px solid var(--border); border-radius: 0.5rem; overflow: hidden; }
+table.papel th { background: var(--paper-head); border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  padding: 0.55rem 0.75rem; font-weight: 600; text-align: left; font-size: 0.75rem;
+  text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+table.papel th:last-child { border-right: 0; }
+table.papel td { border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+  padding: 0.55rem 0.75rem; font-size: 0.875rem; vertical-align: top; }
+table.papel td:last-child { border-right: 0; }
+table.papel tbody tr:last-child td { border-bottom: 0; }
 table.papel td.num { text-align: right; font-variant-numeric: tabular-nums; }
-table.papel tr:nth-child(even) td { background: var(--paper-row-alt); }
+table.papel tbody tr:nth-child(even) td { background: var(--paper-row-alt); }
 table.papel .seccion { background: var(--paper-head); font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.8rem; }
+  text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.75rem; color: var(--fg); }
 
-/* --- Secciones tipo formulario impreso --- */
-.seccion-papel { border: 1px solid var(--paper-border); padding: 1rem; margin-bottom: 1rem;
-  background: var(--surface); page-break-inside: avoid; }
-.seccion-papel h2 { background: var(--paper-head); padding: 0.5rem 0.75rem;
-  margin: -1rem -1rem 1rem -1rem; font-size: 0.9rem; text-transform: uppercase;
-  letter-spacing: 0.05em; border-bottom: 1px solid var(--paper-border); }
-.campo-subrayado { border: none; border-bottom: 1px solid var(--paper-border);
+/* --- Secciones de formulario --- */
+.seccion-papel { border: 1px solid var(--border); border-radius: 0.75rem; padding: 1rem;
+  margin-bottom: 1rem; background: var(--surface); page-break-inside: avoid; overflow-x: auto; }
+.seccion-papel h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); background: transparent; border-bottom: 1px solid var(--border);
+  margin: 0 0 0.75rem; padding: 0 0 0.5rem; }
+.campo-subrayado { border: none; border-bottom: 1px solid var(--border);
   padding: 0.25rem 0.4rem; font-size: 1rem; background: transparent; color: var(--fg);
   width: 100%; }
 .campo-subrayado:focus { outline: none; border-bottom-color: var(--fg); }
-.linea-firma { border-bottom: 1px solid var(--paper-border); height: 1.2rem; }
-.cabecera-papel { border: 2px solid var(--paper-border); padding: 0.75rem 1rem;
+.linea-firma { border-bottom: 1px solid var(--border); height: 1.2rem; }
+.cabecera-papel { border: 1px solid var(--border); border-radius: 0.75rem; padding: 0.85rem 1rem;
   margin-bottom: 1rem; background: var(--surface); }
-.cabecera-papel h1 { font-size: 1.25rem; margin: 0; text-transform: uppercase;
-  letter-spacing: 0.08em; }
+.cabecera-papel h1 { font-size: 1.15rem; margin: 0; font-weight: 700; letter-spacing: 0; }
 .cabecera-papel .sub { font-size: 0.85rem; color: var(--muted); margin-top: 0.25rem; }
 `;
-
-const AUTH_STYLE = `body { --brand: #eb7716; --on-brand: #ffffff; --brand-contrast: #eb7716; }`;
 
 function esc(value: string): string {
   return value
@@ -218,7 +219,7 @@ export function page(opts: PageOptions, body: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(opts.title)} · ${esc(brand)}</title>
-<style>${BASE_STYLE}${opts.user ? AUTH_STYLE : ''}</style>
+<style>${BASE_STYLE}</style>
 </head>
 <body${opts.user ? '' : ' class="public"'}> `;
 

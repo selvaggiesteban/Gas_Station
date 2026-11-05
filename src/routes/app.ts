@@ -267,8 +267,8 @@ function progressBar(progress: number, goalValue: number): string {
       : progress > 0
         ? 100
         : 0;
-  return `<div style="background:#e7e5e4;border-radius:999px;height:0.5rem;max-width:20rem">
-    <div style="background:#eb7716;height:0.5rem;border-radius:999px;width:${pct}%"></div>
+  return `<div style="background:#e4e4e7;border-radius:999px;height:0.5rem;max-width:20rem">
+    <div style="background:#0a0a0a;height:0.5rem;border-radius:999px;width:${pct}%"></div>
   </div>`;
 }
 
@@ -285,7 +285,7 @@ function challengeCard(
     : `<form method="post" action="/desafios/${challenge.id}/unirse" style="display:inline">
          <button type="submit">Unirme</button>
        </form>`;
-  return `<div style="border-top:1px solid #e7e5e4;padding:0.85rem 0">
+  return `<div style="border-top:1px solid #e4e4e7;padding:0.85rem 0">
     <h3 style="margin:0 0 0.25rem;font-size:1rem">${escapeHtml(challenge.title)}</h3>
     ${challenge.description ? `<p class="muted" style="margin:0 0 0.5rem">${escapeHtml(challenge.description)}</p>` : ''}
     <p style="margin:0 0 0.5rem">Meta: <strong>${escapeHtml(formatGoalValue(challenge.goalType, challenge.goalValue))}</strong>
@@ -365,7 +365,7 @@ async function loadAnnouncementsHtml(
   if (rows.length === 0) return '';
   const items = rows
     .map(
-      (a) => `<div style="border-top:1px solid #e7e5e4;padding:0.6rem 0">
+      (a) => `<div style="border-top:1px solid #e4e4e7;padding:0.6rem 0">
         <strong>${escapeHtml(a.title)}</strong>
         ${a.body ? `<p class="muted" style="margin:0.25rem 0 0">${escapeHtml(a.body)}</p>` : ''}
         <p class="muted" style="margin:0.25rem 0 0">${a.publishedAt ? DATE_FMT.format(a.publishedAt) : ''} · ${escapeHtml(a.audience === 'all' ? 'Todos' : a.audience === 'customers' ? 'Clientes' : 'Gestores')}</p>

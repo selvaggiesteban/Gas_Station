@@ -87,7 +87,7 @@ shopRoutes.get('/tienda', requireAuth(), async (c) => {
     .map((p) => {
       const sinStock = p.stock !== null && p.stock <= 0;
       const stockHtml = sinStock
-        ? `<span class="pill" style="background:#b91c1c">Sin stock</span>`
+        ? `<span class="pill" style="background:#ffffff;color:#18181b;border:1px solid #18181b">Sin stock</span>`
         : p.stock === null
           ? `<span class="pill">Disponible</span>`
           : `<span class="pill">Disponible</span> <span class="muted">${p.stock} en stock</span>`;

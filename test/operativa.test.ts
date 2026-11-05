@@ -676,4 +676,242 @@ describe('operativa', () => {
     expect(altaVenta.status).toBe(403);
     expect(await count('sales_summaries')).toBe(ventas);
   });
+
+  it('rendición ampliada: ventas por rubro, ensobrada, fondo, vales y observaciones', async () => {
+    const cookie = await registerAs(
+      'Rendicion Ampliada',
+      uniqueEmail('rendicion-amp'),
+      'admin',
+    );
+    const creada = await post(
+      '/operativa/rendicion',
+      {
+        fecha: '2026-11-05',
+        turno: 'adicional',
+        inicio: '2026-11-05T08:00',
+        fin: '2026-11-05T12:00',
+        apertura: '1000',
+        cierre: '1200',
+        gnc_qty: '100',
+        gnc_price: '1500',
+        lubricantes_qty: '4',
+        lubricantes_price: '2500',
+        varios_qty: '2',
+        varios_price: '800',
+        sobre1_hora: '09:30',
+        sobre1_importe: '5000',
+        sobre2_hora: '11:00',
+        sobre2_importe: '3500',
+        fondo_cambio_saliente: '2000',
+        fondo_cambio_entrante: '2500',
+        vales_empleados: '15000',
+        vales_alerta: 'on',
+        notas: 'observación del turno',
+        r0_surtidor: '2',
+        r0_nozzle: '1',
+        r0_producto: 'gnc',
+        r0_apertura: '100',
+        r0_cierre: '200',
+        r0_precio: '1500',
+      },
+      cookie,
+    );
+    expect(creada.status).toBe(302);
+    const loc = creada.headers.get('location') ?? '';
+    expect(loc).toMatch(/^\/operativa\/rendicion\/\d+\?aviso=1$/);
+    const id = Number(/rendicion\/(\d+)/.exec(loc)?.[1]);
+
+    const row = await env.DB.prepare(
+      'select * from shift_reports where id = ?',
+    )
+      .bind(id)
+      .first<Record<string, unknown>>();
+    expect(row).toBeTruthy();
+    expect(row!.shift).toBe('adicional');
+    expect(row!.gnc_qty).toBe(100);
+    expect(row!.gnc_price_cents).toBe(150000);
+    expect(row!.gnc_sales_cents).toBe(100 * 150000);
+    expect(row!.lubricantes_sales_cents).toBe(4 * 250000);
+    expect(row!.varios_sales_cents).toBe(2 * 80000);
+    expect(row!.total_sales_cents).toBe(
+      100 * 150000 + 4 * 250000 + 2 * 80000,
+    );
+    expect(row!.sobre_1_hora).toBe('09:30');
+    expect(row!.sobre_1_importe_cents).toBe(500000);
+    expect(row!.sobre_2_hora).toBe('11:00');
+    expect(row!.sobre_2_importe_cents).toBe(350000);
+    expect(row!.total_ensobrado_cents).toBe(850000);
+    expect(row!.fondo_cambio_saliente_cents).toBe(200000);
+    expect(row!.fondo_cambio_entrante_cents).toBe(250000);
+    expect(row!.vales_empleados_cents).toBe(1500000);
+    expect(row!.vales_alerta).toBe(1);
+    expect(row!.observaciones).toBe('observación del turno');
+
+    const detalle = await get(`/operativa/rendicion/${id}`, cookie);
+    expect(detalle.status).toBe(200);
+    const html = await detalle.text();
+    expect(html).toContain('Ventas del turno');
+    expect(html).toContain('Recaudación ensobrada');
+    expect(html).toContain('Fondo de cambio transferido');
+    expect(html).toContain('Vales de empleados');
+    expect(html).toContain('Alerta $20.000 activada');
+    expect(html).toContain('observación del turno');
+    expect(html).toContain(
+      new Intl.NumberFormat('es-AR', {
+        style: 'currency',
+        currency: 'ARS',
+      }).format(161600),
+    );
+
+    const listado = await get('/operativa/rendicion', cookie);
+    expect(listado.status).toBe(200);
+    expect(await listado.text()).toContain('Ventas');
+  });
+
+  it('sorteo: exige DNI y dirección y los muestra en el listado', async () => {
+    const cookie = await registerAs(
+      'Sorteo Datos',
+      uniqueEmail('sorteo-datos'),
+      'admin',
+    );
+
+    const sinDni = await post(
+      '/operativa/sorteo',
+      {
+        cantidad: '1',
+        nombre: 'Juan Pérez',
+        direccion: 'Calle Falsa 123',
+      },
+      cookie,
+    );
+    expect(sinDni.status).toBe(422);
+
+    const sinDireccion = await post(
+      '/operativa/sorteo',
+      { cantidad: '1', nombre: 'Juan Pérez', dni: '30111222' },
+      cookie,
+    );
+    expect(sinDireccion.status).toBe(422);
+
+    const antes = await count('raffle_coupons');
+    const ok = await post(
+      '/operativa/sorteo',
+      {
+        cantidad: '2',
+        nombre: 'Juan Pérez',
+        dni: '30111222',
+        direccion: 'Calle Falsa 123, CABA',
+        telefono: '1155550000',
+      },
+      cookie,
+    );
+    expect(ok.status).toBe(302);
+    expect(await count('raffle_coupons')).toBe(antes + 2);
+
+    const listado = await get('/operativa/sorteo', cookie);
+    expect(listado.status).toBe(200);
+    const html = await listado.text();
+    expect(html).toContain('30111222');
+    expect(html).toContain('Calle Falsa 123, CABA');
+    expect(html).toContain('1155550000');
+  });
+
+  it('lubricantes: recibidos, vendidos y entregados alimentan el cierre', async () => {
+    const cookie = await registerAs(
+      'Lubricantes Stock',
+      uniqueEmail('lubricantes-stock'),
+      'admin',
+    );
+    const antes = await count('lubricant_stocks');
+
+    const creada = await post(
+      '/operativa/lubricantes',
+      {
+        fecha: '2026-11-05',
+        marca: 'YPF',
+        grado: '5W30',
+        envase_l: '1',
+        apertura: '10',
+        recibidos: '6',
+        entradas: '4',
+        vendidos: '5',
+        entregados: '3',
+        salidas: '2',
+        precio: '8500',
+      },
+      cookie,
+    );
+    expect(creada.status).toBe(302);
+    expect(creada.headers.get('location')).toBe(
+      '/operativa/lubricantes?aviso=1',
+    );
+    expect(await count('lubricant_stocks')).toBe(antes + 1);
+
+    const row = await env.DB.prepare(
+      'select * from lubricant_stocks where brand = ? order by id desc limit 1',
+    )
+      .bind('YPF')
+      .first<{
+        opening_qty: number;
+        recibidos_qty: number;
+        vendidos_qty: number;
+        entregados_qty: number;
+        entries_qty: number;
+        exits_qty: number;
+        closing_qty: number;
+        unit_price_cents: number;
+      }>();
+    expect(row).toBeTruthy();
+    expect(row!.recibidos_qty).toBe(6);
+    expect(row!.vendidos_qty).toBe(5);
+    expect(row!.entregados_qty).toBe(3);
+    expect(row!.closing_qty).toBe(10 + 6 + 4 - 5 - 3 - 2);
+    expect(row!.unit_price_cents).toBe(850000);
+
+    const listado = await get('/operativa/lubricantes', cookie);
+    expect(listado.status).toBe(200);
+    const html = await listado.text();
+    expect(html).toContain('Recibidos');
+    expect(html).toContain('Vendidos');
+    expect(html).toContain('Entregados');
+  });
+
+  it('resumen diario: solo admin lo ve y puede guardar observaciones', async () => {
+    const cliente = await register(
+      'Cliente Resumen',
+      uniqueEmail('resumen-cliente'),
+    );
+    expect((await get('/operativa/resumen-diario', cliente)).status).toBe(403);
+
+    const gestor = await registerAs(
+      'Gestor Resumen',
+      uniqueEmail('resumen-gestor'),
+      'store_manager',
+    );
+    expect((await get('/operativa/resumen-diario', gestor)).status).toBe(403);
+
+    const admin = await registerAs(
+      'Admin Resumen',
+      uniqueEmail('resumen-admin'),
+      'admin',
+    );
+    const pagina = await get('/operativa/resumen-diario', admin);
+    expect(pagina.status).toBe(200);
+    const html = await pagina.text();
+    expect(html).toContain('Resumen diario de actividades');
+    expect(html).toContain('TOTAL RECAUDACIÓN');
+    expect(html).toContain('Mañana');
+    expect(html).toContain('Adicional');
+
+    const guardado = await post(
+      '/operativa/resumen-diario/observaciones',
+      { fecha: '2026-11-05', observaciones: 'todo en orden' },
+      admin,
+    );
+    expect(guardado.status).toBe(302);
+
+    const tras = await get('/operativa/resumen-diario?fecha=2026-11-05', admin);
+    expect(tras.status).toBe(200);
+    expect(await tras.text()).toContain('todo en orden');
+  });
 });

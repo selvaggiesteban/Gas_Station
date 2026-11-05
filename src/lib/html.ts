@@ -322,6 +322,7 @@ function sidebarLinks(user: { name: string; points: number; role: string }): str
         { href: '/admin/ordenes', label: 'Órdenes' },
         { href: '/operativa', label: 'Operativa' },
         { href: '/operativa/caja/movimientos', label: 'Movimientos' },
+        { href: '/operativa/resumen-diario', label: 'Resumen diario' },
         { href: '/ranking', label: 'Ranking' },
       ]
     : isGestor

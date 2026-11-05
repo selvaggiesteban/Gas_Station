@@ -992,19 +992,25 @@ operativaRoutes.get('/operativa/sorteo', async (c) => {
       (r) => `<tr>
         <td style="${TD}"><strong>${escapeHtml(r.code)}</strong></td>
         <td style="${TD}">${escapeHtml(r.holderName)}</td>
-        <td style="${TD}">${escapeHtml(r.holderEmail ?? '—')}</td>
+        <td style="${TD}">${escapeHtml(r.holderDni ?? '—')}</td>
+        <td style="${TD}">${escapeHtml(r.holderAddress ?? '—')}</td>
+        <td style="${TD}">${escapeHtml(r.holderPhone ?? '—')}</td>
         <td style="${TD}">${fmtMoment(r.issuedAt)}</td>
         <td style="${TD}">${r.winning ? `<span class="pill">Ganador</span>${r.drawnAt ? ` <span class="muted">${fmtMoment(r.drawnAt)}</span>` : ''}` : '<span class="muted">Emitido</span>'}</td>
         <td style="${TD}">
           <details style="display:inline">
             <summary style="cursor:pointer;font-size:0.85rem">Editá</summary>
-            <form method="post" action="/operativa/sorteo/${r.id}/editar" style="min-width:14rem">
-              <label for="sn-${r.id}">Nombre de quien recibe</label>
+            <form method="post" action="/operativa/sorteo/${r.id}/editar" style="min-width:16rem">
+              <label for="sn-${r.id}">Nombre del consumidor</label>
               <input id="sn-${r.id}" name="nombre" type="text" required value="${escapeHtml(r.holderName)}">
-              <label for="se-${r.id}">Email</label>
-              <input id="se-${r.id}" name="email" type="text" value="${escapeHtml(r.holderEmail ?? '')}">
+              <label for="sdi-${r.id}">DNI</label>
+              <input id="sdi-${r.id}" name="dni" type="text" required value="${escapeHtml(r.holderDni ?? '')}">
+              <label for="sdir-${r.id}">Dirección</label>
+              <input id="sdir-${r.id}" name="direccion" type="text" required value="${escapeHtml(r.holderAddress ?? '')}">
               <label for="sp-${r.id}">Teléfono</label>
               <input id="sp-${r.id}" name="telefono" type="text" value="${escapeHtml(r.holderPhone ?? '')}">
+              <label for="se-${r.id}">Email</label>
+              <input id="se-${r.id}" name="email" type="text" value="${escapeHtml(r.holderEmail ?? '')}">
               <label for="snotas-${r.id}">Notas</label>
               <input id="snotas-${r.id}" name="notas" type="text" value="${escapeHtml(r.notes ?? '')}">
               <button type="submit" style="${SMALL_BTN}">Guardá</button>
@@ -1033,12 +1039,14 @@ operativaRoutes.get('/operativa/sorteo', async (c) => {
         <thead><tr>
           <th style="${TH}">Código</th>
           <th style="${TH}">Titular</th>
-          <th style="${TH}">Email</th>
+          <th style="${TH}">DNI</th>
+          <th style="${TH}">Dirección</th>
+          <th style="${TH}">Teléfono</th>
           <th style="${TH}">Emitido</th>
           <th style="${TH}">Estado</th>
           <th style="${TH}">Acciones</th>
         </tr></thead>
-        <tbody>${bodyRows || `<tr><td colspan="6" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
+        <tbody>${bodyRows || `<tr><td colspan="8" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
       </table>
     </div>`,
     { notice: aviso(c, 'Operación sobre cupones realizada.') },
@@ -1147,6 +1155,8 @@ operativaRoutes.post('/operativa/sorteo', async (c) => {
       code,
       storeId: access.storeId,
       holderName: nombre,
+      holderDni: dni,
+      holderAddress: direccion,
       holderEmail: email || null,
       holderPhone: telefono || null,
       notes: notas || null,
@@ -1210,6 +1220,24 @@ operativaRoutes.post('/operativa/sorteo/:id/editar', async (c) => {
       '/operativa/sorteo',
     );
   }
+  const dni = str(body.dni);
+  if (dni.length < 7) {
+    return fail(
+      c,
+      'Cupón de sorteo',
+      'Ingresá un DNI válido (mínimo 7 dígitos).',
+      '/operativa/sorteo',
+    );
+  }
+  const direccion = str(body.direccion);
+  if (direccion.length < 5) {
+    return fail(
+      c,
+      'Cupón de sorteo',
+      'Ingresá la dirección del consumidor.',
+      '/operativa/sorteo',
+    );
+  }
   const email = str(body.email);
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return fail(
@@ -1223,6 +1251,8 @@ operativaRoutes.post('/operativa/sorteo/:id/editar', async (c) => {
     .update(raffleCoupons)
     .set({
       holderName: nombre,
+      holderDni: dni,
+      holderAddress: direccion,
       holderEmail: email || null,
       holderPhone: str(body.telefono) || null,
       notes: str(body.notas) || null,
@@ -2166,6 +2196,9 @@ operativaRoutes.get('/operativa/lubricantes', async (c) => {
         <td style="${TD}">${escapeHtml(r.grade)}</td>
         <td style="${TD}">${r.containerL} L</td>
         <td style="${TD}">${r.openingQty}</td>
+        <td style="${TD}">${r.recibidosQty}</td>
+        <td style="${TD}">${r.vendidosQty}</td>
+        <td style="${TD}">${r.entregadosQty}</td>
         <td style="${TD}">${r.entriesQty}</td>
         <td style="${TD}">${r.exitsQty}</td>
         <td style="${TD}"><strong>${r.closingQty}</strong></td>
@@ -2182,6 +2215,12 @@ operativaRoutes.get('/operativa/lubricantes', async (c) => {
               <input id="lenv-${r.id}" name="envase_l" type="number" step="0.001" min="0" required value="${r.containerL}">
               <label for="lap-${r.id}">Apertura</label>
               <input id="lap-${r.id}" name="apertura" type="number" step="1" min="0" required value="${r.openingQty}">
+              <label for="lrec-${r.id}">Recibidos</label>
+              <input id="lrec-${r.id}" name="recibidos" type="number" step="1" min="0" value="${r.recibidosQty}">
+              <label for="lven-${r.id}">Vendidos</label>
+              <input id="lven-${r.id}" name="vendidos" type="number" step="1" min="0" value="${r.vendidosQty}">
+              <label for="lenr-${r.id}">Entregados</label>
+              <input id="lenr-${r.id}" name="entregados" type="number" step="1" min="0" value="${r.entregadosQty}">
               <label for="len-${r.id}">Entradas</label>
               <input id="len-${r.id}" name="entradas" type="number" step="1" min="0" required value="${r.entriesQty}">
               <label for="lsa-${r.id}">Salidas</label>
@@ -2203,7 +2242,7 @@ operativaRoutes.get('/operativa/lubricantes', async (c) => {
     'Stock de lubricantes',
     `<div class="card">
       <h1>Stock de lubricantes</h1>
-      <p class="muted">El cierre se calcula en el servidor como apertura más entradas menos salidas.</p>
+      <p class="muted">Cierre = apertura + recibidos + entradas − vendidos − entregados − salidas.</p>
       ${filterBar('/operativa/lubricantes', fecha, storesHtml)}
       <a class="btn" href="/operativa/lubricantes/nuevo">Cargá un recuento</a>
       <table class="papel" style="margin-top:0.75rem">
@@ -2213,13 +2252,16 @@ operativaRoutes.get('/operativa/lubricantes', async (c) => {
           <th style="${TH}">Grado</th>
           <th style="${TH}">Envase</th>
           <th style="${TH}">Apertura</th>
+          <th style="${TH}">Recibidos</th>
+          <th style="${TH}">Vendidos</th>
+          <th style="${TH}">Entregados</th>
           <th style="${TH}">Entradas</th>
           <th style="${TH}">Salidas</th>
           <th style="${TH}">Cierre</th>
           <th style="${TH}">Precio unit.</th>
           <th style="${TH}">Acciones</th>
         </tr></thead>
-        <tbody>${bodyRows || `<tr><td colspan="10" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
+        <tbody>${bodyRows || `<tr><td colspan="13" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
       </table>
     </div>`,
     { notice: aviso(c, 'Stock guardado.') },
@@ -2233,7 +2275,7 @@ operativaRoutes.get('/operativa/lubricantes/nuevo', async (c) => {
   if ('error' in access) return denied(c, access.error);
   const storesHtml = await storeOptions(db, access.storeId);
   const catalog = await db
-    .select({ id: products.id, name: products.name })
+    .select({ id: products.id, name: products.name, priceCents: products.priceCents })
     .from(products)
     .where(eq(products.active, true))
     .orderBy(asc(products.name))
@@ -2246,6 +2288,9 @@ operativaRoutes.get('/operativa/lubricantes/nuevo', async (c) => {
           `<option value="${p.id}">${escapeHtml(p.name)}</option>`,
       )
       .join('');
+  const productPrices = JSON.stringify(
+    Object.fromEntries(catalog.map((p) => [String(p.id), p.priceCents / 100])),
+  );
   return render(
     c,
     'Nuevo recuento de lubricantes',
@@ -2256,8 +2301,6 @@ operativaRoutes.get('/operativa/lubricantes/nuevo', async (c) => {
         <select id="tienda" name="tienda">${storesHtml}</select>
         <label for="fecha">Fecha del conteo</label>
         <input id="fecha" name="fecha" type="date" required value="${todayInput()}">
-        <label for="turno">Turno</label>
-        <select id="turno" name="turno">${shiftOptions()}</select>
         <label for="producto">Vincular a un producto de la tienda (opcional)</label>
         <select id="producto" name="producto">${productOptions}</select>
         <label for="marca">Marca</label>
@@ -2282,7 +2325,20 @@ operativaRoutes.get('/operativa/lubricantes/nuevo', async (c) => {
         <button type="submit">Guardá el recuento</button>
       </form>
       <p><a href="/operativa/lubricantes">Volver al listado</a></p>
-    </div>`,
+    </div>
+    <script>
+      (function(){
+        const precios = ${productPrices};
+        const prod = document.getElementById('producto');
+        const precio = document.getElementById('precio');
+        if (prod && precio) {
+          prod.addEventListener('change', function(){
+            const p = precios[prod.value];
+            if (p !== undefined) precio.value = Number(p).toFixed(2);
+          });
+        }
+      })();
+    </script>`,
   );
 });
 
@@ -2490,7 +2546,10 @@ operativaRoutes.post('/operativa/lubricantes/:id/editar', async (c) => {
       '/operativa/lubricantes',
     );
   }
-  const cierre = apertura + entradas - salidas;
+  const recibidos = qtyFrom(body.recibidos) ?? 0;
+  const vendidos = qtyFrom(body.vendidos) ?? 0;
+  const entregados = qtyFrom(body.entregados) ?? 0;
+  const cierre = apertura + recibidos + entradas - vendidos - entregados - salidas;
   if (cierre < 0) {
     return fail(
       c,
@@ -2519,6 +2578,9 @@ operativaRoutes.post('/operativa/lubricantes/:id/editar', async (c) => {
       exitsQty: salidas,
       closingQty: cierre,
       unitPriceCents: precio,
+      recibidosQty: recibidos,
+      vendidosQty: vendidos,
+      entregadosQty: entregados,
       updatedAt: new Date(),
     })
     .where(eq(lubricantStocks.id, id));
@@ -2674,6 +2736,7 @@ operativaRoutes.get('/operativa/rendicion', async (c) => {
         <td style="${TD}">${MOMENT_FMT.format(r.shiftEnd)}</td>
         <td style="${TD}">${formatArs(r.openingCents)}</td>
         <td style="${TD}">${formatArs(r.closingCents)}</td>
+        <td style="${TD}">${formatArs(r.totalSalesCents)}</td>
         <td style="${TD}"><a href="/operativa/rendicion/${r.id}">Ver detalle</a></td>
       </tr>`,
     )
@@ -2697,9 +2760,10 @@ operativaRoutes.get('/operativa/rendicion', async (c) => {
           <th style="${TH}">Fin</th>
           <th style="${TH}">Apertura</th>
           <th style="${TH}">Cierre</th>
+          <th style="${TH}">Ventas</th>
           <th style="${TH}">Detalle</th>
         </tr></thead>
-        <tbody>${bodyRows || `<tr><td colspan="7" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
+        <tbody>${bodyRows || `<tr><td colspan="8" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
       </table>
     </div>`,
     { notice: aviso(c, 'Rendición guardada.') },
@@ -2756,7 +2820,7 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
         <div class="grid">
           <div>
             <label for="gnc_qty">GNC - Cantidad (m³)</label>
-            <input id="gnc_qty" name="gnc_qty" type="number" step="0.01" min="0" value="0">
+            <input id="gnc_qty" name="gnc_qty" type="number" step="1" min="0" value="0">
           </div>
           <div>
             <label for="gnc_price">GNC - Precio unitario (pesos/m³)</label>
@@ -2903,10 +2967,15 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
         function cents(v) { return Math.round(parseFloat(v || 0) * 100); }
         function fmt(v) { return (v/100).toFixed(2); }
         function calc() {
-          // Ventas
-          const gnc = cents(document.getElementById('gnc_qty').value) * cents(document.getElementById('gnc_price').value) / 10000;
-          const lub = cents(document.getElementById('lubricantes_qty').value) * cents(document.getElementById('lubricantes_price').value) / 10000;
-          const var_ = cents(document.getElementById('varios_qty').value) * cents(document.getElementById('varios_price').value) / 10000;
+          // Ventas por rubro: el importe se calcula en el servidor con la misma regla
+          function importe(qid, pid) {
+            const q = Math.round(parseFloat(document.getElementById(qid).value || 0));
+            const p = cents(document.getElementById(pid).value);
+            return Math.round(q * p);
+          }
+          const gnc = importe('gnc_qty', 'gnc_price');
+          const lub = importe('lubricantes_qty', 'lubricantes_price');
+          const var_ = importe('varios_qty', 'varios_price');
           document.getElementById('gnc_sales').value = fmt(gnc);
           document.getElementById('lubricantes_sales').value = fmt(lub);
           document.getElementById('varios_sales').value = fmt(var_);
@@ -3020,16 +3089,33 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
     return fail(c, 'Rendición de turno', readings, '/operativa/rendicion/nuevo');
   }
   
-  // Parse new fields
-  const gncQty = qtyFrom(body.gnc_qty) ?? 0;
-  const gncPriceCents = centsFrom(body.gnc_price) ?? 0;
-  const gncSalesCents = centsFrom(body.gnc_sales) ?? Math.round(gncQty * gncPriceCents);
-  const lubricantesQty = qtyFrom(body.lubricantes_qty) ?? 0;
-  const lubricantesPriceCents = centsFrom(body.lubricantes_price) ?? 0;
-  const lubricantesSalesCents = centsFrom(body.lubricantes_sales) ?? Math.round(lubricantesQty * lubricantesPriceCents);
-  const variosQty = qtyFrom(body.varios_qty) ?? 0;
-  const variosPriceCents = centsFrom(body.varios_price) ?? 0;
-  const variosSalesCents = centsFrom(body.varios_sales) ?? Math.round(variosQty * variosPriceCents);
+  // Ventas por rubro: el importe se calcula SIEMPRE en el servidor
+  const gncQty = qtyFrom(body.gnc_qty);
+  const gncPriceCents = centsOr0(body.gnc_price);
+  const lubricantesQty = qtyFrom(body.lubricantes_qty);
+  const lubricantesPriceCents = centsOr0(body.lubricantes_price);
+  const variosQty = qtyFrom(body.varios_qty);
+  const variosPriceCents = centsOr0(body.varios_price);
+  if (
+    gncQty === null ||
+    gncPriceCents === null ||
+    lubricantesQty === null ||
+    lubricantesPriceCents === null ||
+    variosQty === null ||
+    variosPriceCents === null
+  ) {
+    return fail(
+      c,
+      'Rendición de turno',
+      'Las cantidades o precios de los rubros no son válidos.',
+      '/operativa/rendicion/nuevo',
+    );
+  }
+  const gncSalesCents = Math.round(gncQty * gncPriceCents);
+  const lubricantesSalesCents = Math.round(
+    lubricantesQty * lubricantesPriceCents,
+  );
+  const variosSalesCents = Math.round(variosQty * variosPriceCents);
   const totalSalesCents = gncSalesCents + lubricantesSalesCents + variosSalesCents;
   
   const sobre1Hora = str(body.sobre1_hora) || null;
@@ -3164,6 +3250,32 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
   const totalCents = Number(totals[0]?.total ?? 0);
   const totalVolume = Number(totals[0]?.volume ?? 0);
 
+  const sobres = [
+    { n: 1, hora: report.sobre1Hora, cents: report.sobre1ImporteCents },
+    { n: 2, hora: report.sobre2Hora, cents: report.sobre2ImporteCents },
+    { n: 3, hora: report.sobre3Hora, cents: report.sobre3ImporteCents },
+    { n: 4, hora: report.sobre4Hora, cents: report.sobre4ImporteCents },
+    { n: 5, hora: report.sobre5Hora, cents: report.sobre5ImporteCents },
+    { n: 6, hora: report.sobre6Hora, cents: report.sobre6ImporteCents },
+  ];
+  const sobreRows = sobres
+    .map(
+      (s) => `<tr>
+        <td style="${TD}">Sobre ${s.n}</td>
+        <td style="${TD}">${s.hora ? escapeHtml(s.hora) : '—'}</td>
+        <td style="${TD_NUM}">${formatArs(s.cents)}</td>
+      </tr>`,
+    )
+    .join('');
+
+  const rubroRow = (label: string, qty: number, price: number, sales: number, unit: string) =>
+    `<tr>
+      <td style="${TD}">${label}</td>
+      <td style="${TD_NUM}">${qty} ${unit}</td>
+      <td style="${TD_NUM}">${formatArs(price)}</td>
+      <td style="${TD_NUM}">${formatArs(sales)}</td>
+    </tr>`;
+
   return render(
     c,
     'Detalle de rendición',
@@ -3177,7 +3289,6 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
         <span>Apertura de caja: <strong>${formatArs(report.openingCents)}</strong></span>
         <span>Cierre de caja: <strong>${formatArs(report.closingCents)}</strong></span>
       </div>
-      ${report.notes ? `<p class="muted">Notas: ${escapeHtml(report.notes)}</p>` : ''}
       <table class="papel" style="margin-top:0.75rem">
         <thead><tr>
           <th style="${TH}">Surtidor</th>
@@ -3197,7 +3308,62 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
           <td style="${TD}"><strong>${formatArs(totalCents)}</strong></td>
         </tr></tfoot>
       </table>
-      <p><a href="/operativa/rendicion">Volver al listado</a></p>
+
+      <h2 style="margin-top:1.25rem">Ventas del turno</h2>
+      <table class="papel">
+        <thead><tr>
+          <th style="${TH}">Rubro</th>
+          <th style="${TH}">Cantidad</th>
+          <th style="${TH}">Precio unitario</th>
+          <th style="${TH}">Importe</th>
+        </tr></thead>
+        <tbody>
+          ${rubroRow('GNC', report.gncQty, report.gncPriceCents, report.gncSalesCents, 'm³')}
+          ${rubroRow('Lubricantes', report.lubricantesQty, report.lubricantesPriceCents, report.lubricantesSalesCents, 'un.')}
+          ${rubroRow('Varios', report.variosQty, report.variosPriceCents, report.variosSalesCents, 'un.')}
+          <tr>
+            <td style="${TD}"><strong>Total ventas</strong></td>
+            <td style="${TD}"></td>
+            <td style="${TD}"></td>
+            <td style="${TD_NUM}"><strong>${formatArs(report.totalSalesCents)}</strong></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2 style="margin-top:1.25rem">Recaudación ensobrada</h2>
+      <table class="papel">
+        <thead><tr>
+          <th style="${TH}">Sobre</th>
+          <th style="${TH}">Hora</th>
+          <th style="${TH}">Importe</th>
+        </tr></thead>
+        <tbody>
+          ${sobreRows}
+          <tr>
+            <td style="${TD}"><strong>Total ensobrado</strong></td>
+            <td style="${TD}"></td>
+            <td style="${TD_NUM}"><strong>${formatArs(report.totalEnsobradoCents)}</strong></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2 style="margin-top:1.25rem">Fondo de cambio transferido</h2>
+      <div class="row">
+        <span>Operación saliente: <strong>${formatArs(report.fondoCambioSalienteCents)}</strong></span>
+        <span>Operación entrante: <strong>${formatArs(report.fondoCambioEntranteCents)}</strong></span>
+      </div>
+
+      <h2 style="margin-top:1.25rem">Vales de empleados</h2>
+      <div class="row">
+        <span>Importe: <strong>${formatArs(report.valesEmpleadosCents)}</strong></span>
+        <span class="pill">${report.valesAlerta ? 'Alerta $20.000 activada' : 'Sin alerta'}</span>
+      </div>
+      ${report.valesAlerta ? `<p class="muted" style="margin-top:0.35rem">No podrán tener más de $20.000 por billetera en caso de robo. La diferencia mayor será abonada por ustedes.</p>` : ''}
+
+      <h2 style="margin-top:1.25rem">Observaciones</h2>
+      <p>${report.observaciones ? escapeHtml(report.observaciones) : report.notes ? escapeHtml(report.notes) : '<span class="muted">Sin observaciones.</span>'}</p>
+
+      <p style="margin-top:1rem"><a href="/operativa/rendicion">Volver al listado</a></p>
     </div>`,
     { notice: aviso(c, 'Rendición guardada.') },
   );

@@ -524,6 +524,8 @@ describe('operativa', () => {
       {
         cantidad: '3',
         nombre: 'María Díaz',
+        dni: '12345678',
+        direccion: 'Av. Siempre Viva 742, Springfield',
         email: 'maria@example.com',
         telefono: '1155554444',
       },

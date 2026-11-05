@@ -36,6 +36,13 @@
       "when": 1792627590801,
       "tag": "0004_cash_lines_kind",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1792627590802,
+      "tag": "0005_enhance_operativa",
+      "breakpoints": true
     }
   ]
 }

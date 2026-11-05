@@ -12,6 +12,7 @@ import {
   cashDays,
   cashLines,
   dailyActivities,
+  dailyActivitySummary,
   lubricantStocks,
   products,
   raffleCoupons,
@@ -41,6 +42,7 @@ const SHIFT_LABELS: Record<Shift, string> = {
   morning: 'Mañana',
   evening: 'Tarde',
   night: 'Noche',
+  adicional: 'Adicional',
 };
 
 const FUEL_LABELS: Record<Fuel, string> = {
@@ -1059,8 +1061,12 @@ operativaRoutes.get('/operativa/sorteo/nuevo', async (c) => {
         <select id="tienda" name="tienda">${storesHtml}</select>
         <label for="cantidad">Cantidad de cupones (1 a 50)</label>
         <input id="cantidad" name="cantidad" type="number" step="1" min="1" max="50" value="1" required>
-        <label for="nombre">Nombre de quien recibe</label>
+        <label for="nombre">Nombre del consumidor</label>
         <input id="nombre" name="nombre" type="text" required minlength="2">
+        <label for="dni">DNI</label>
+        <input id="dni" name="dni" type="text" required placeholder="Ej.: 12345678">
+        <label for="direccion">Dirección</label>
+        <input id="direccion" name="direccion" type="text" required placeholder="Calle, número, ciudad">
         <label for="email">Email (opcional)</label>
         <input id="email" name="email" type="text">
         <label for="telefono">Teléfono (opcional)</label>
@@ -1093,7 +1099,25 @@ operativaRoutes.post('/operativa/sorteo', async (c) => {
     return fail(
       c,
       'Cupón de sorteo',
-      'Ingresá el nombre de quien recibe el cupón.',
+      'Ingresá el nombre del consumidor.',
+      '/operativa/sorteo/nuevo',
+    );
+  }
+  const dni = str(body.dni);
+  if (dni.length < 7) {
+    return fail(
+      c,
+      'Cupón de sorteo',
+      'Ingresá un DNI válido (mínimo 7 dígitos).',
+      '/operativa/sorteo/nuevo',
+    );
+  }
+  const direccion = str(body.direccion);
+  if (direccion.length < 5) {
+    return fail(
+      c,
+      'Cupón de sorteo',
+      'Ingresá la dirección del consumidor.',
       '/operativa/sorteo/nuevo',
     );
   }
@@ -1835,6 +1859,273 @@ operativaRoutes.post('/operativa/actividades', async (c) => {
   return c.redirect('/operativa/actividades?aviso=1');
 });
 
+operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c) => {
+  const db = dbOf(c);
+  const access = await resolveStore(c, db, c.req.query('tienda'));
+  if ('error' in access) return denied(c, access.error);
+  const fecha = str(c.req.query('fecha'));
+  const day = fecha ? dayStart(fecha) : null;
+  if (fecha && !day) {
+    return fail(
+      c,
+      'Resumen diario de actividades',
+      'Ingresá una fecha válida.',
+      '/operativa/resumen-diario',
+    );
+  }
+  const selected = day ?? utcToday();
+  const fechaInput = dateInput(selected);
+
+  // Get all data for the day
+  const [activities, sales, shiftReportsData, cash, lubricantes] = await Promise.all([
+    db
+      .select()
+      .from(dailyActivities)
+      .where(
+        and(
+          eq(dailyActivities.storeId, access.storeId),
+          gte(dailyActivities.reportDate, selected),
+          lt(dailyActivities.reportDate, nextDay(selected)),
+        ),
+      )
+      .orderBy(asc(dailyActivities.shift)),
+    db
+      .select()
+      .from(salesSummaries)
+      .where(
+        and(
+          eq(salesSummaries.storeId, access.storeId),
+          gte(salesSummaries.reportDate, selected),
+          lt(salesSummaries.reportDate, nextDay(selected)),
+        ),
+      )
+      .orderBy(asc(salesSummaries.shift)),
+    db
+      .select()
+      .from(shiftReports)
+      .where(
+        and(
+          eq(shiftReports.storeId, access.storeId),
+          gte(shiftReports.reportDate, selected),
+          lt(shiftReports.reportDate, nextDay(selected)),
+        ),
+      )
+      .orderBy(asc(shiftReports.shift)),
+    db
+      .select()
+      .from(cashDays)
+      .where(
+        and(
+          eq(cashDays.storeId, access.storeId),
+          gte(cashDays.reportDate, selected),
+          lt(cashDays.reportDate, nextDay(selected)),
+        ),
+      )
+      .limit(1),
+    db
+      .select()
+      .from(lubricantStocks)
+      .where(
+        and(
+          eq(lubricantStocks.storeId, access.storeId),
+          gte(lubricantStocks.reportDate, selected),
+          lt(lubricantStocks.reportDate, nextDay(selected)),
+        ),
+      )
+      .orderBy(desc(lubricantStocks.reportDate), desc(lubricantStocks.id))
+      .limit(1),
+  ]);
+
+  // Organize by shift
+  const shifts = ['morning', 'evening', 'night', 'adicional'] as const;
+  const shiftLabels: Record<string, string> = {
+    morning: 'Mañana',
+    evening: 'Tarde',
+    night: 'Noche',
+    adicional: 'Adicional',
+  };
+
+  // Build summary rows for each shift
+  const summaryRows = shifts.map(shift => {
+    const act = activities.find(a => a.shift === shift);
+    const sal = sales.find(s => s.shift === shift);
+    const sr = shiftReportsData.find(s => s.shift === shift);
+    
+    const gncIngreso = act?.gncOpening ?? 0;
+    const gncCierre = act?.gncClosing ?? 0;
+    const gncVentasM3 = act?.gncVolume ?? 0;
+    const gncMermasExcedencias = gncCierre - gncIngreso - gncVentasM3;
+    const gncPorcentaje = gncIngreso > 0 ? ((gncMermasExcedencias / gncIngreso) * 100) : 0;
+    const gncPrecioUnitario = act?.gncSalesCents && gncVentasM3 > 0 
+      ? Math.round(act.gncSalesCents / gncVentasM3) 
+      : 0;
+    const gncImporteTotal = act?.gncSalesCents ?? 0;
+    const lubricantesVariosImporte = sal?.totalCents ?? 0;
+    const facturadoPlayeros = sr?.totalSalesCents ?? 0;
+    const facturacionServicios = sr?.fondoCambioSalienteCents ?? 0;
+    const facturacionMiniMercado = sr?.fondoCambioEntranteCents ?? 0;
+    const totalRecaudacion = gncImporteTotal + lubricantesVariosImporte + facturadoPlayeros + facturacionServicios + facturacionMiniMercado;
+
+    return {
+      shift,
+      label: shiftLabels[shift],
+      gncIngreso,
+      gncMermasExcedencias,
+      gncPorcentaje,
+      gncVentasM3,
+      gncPrecioUnitario,
+      gncImporteTotal,
+      lubricantesVariosImporte,
+      facturadoPlayeros,
+      facturacionServicios,
+      facturacionMiniMercado,
+      totalRecaudacion,
+    };
+  });
+
+  // Get or create daily activity summary for observations
+  const existingSummary = await db
+    .select()
+    .from(dailyActivitySummary)
+    .where(
+      and(
+        eq(dailyActivitySummary.storeId, access.storeId),
+        eq(dailyActivitySummary.reportDate, selected),
+      ),
+    )
+    .limit(1);
+  const summary = existingSummary[0];
+  const observaciones = summary?.observaciones ?? '';
+
+  const storesHtml = await storeOptions(db, access.storeId);
+
+  return render(
+    c,
+    'Resumen diario de actividades',
+    `<div class="card">
+      <h1>Resumen diario de actividades</h1>
+      <form method="get" action="/operativa/resumen-diario" class="row" style="gap:0.5rem;align-items:center">
+        <input type="date" name="fecha" value="${fechaInput}" style="width:auto;margin-top:0" aria-label="Fecha">
+        <select name="tienda" style="width:auto;margin-top:0" aria-label="Tienda">${storesHtml}</select>
+        <button type="submit" style="${SMALL_BTN}">Mostrá</button>
+      </form>
+      <p class="muted" style="margin-top:0.5rem">Fecha: <strong>${fmtDay(selected)}</strong></p>
+      
+      <table class="papel" style="margin-top:0.75rem;font-size:0.8rem">
+        <thead>
+          <tr>
+            <th style="${TH}" rowspan="2">Detalle</th>
+            ${summaryRows.map(r => `<th style="${TH}" colspan="2">${r.label}</th>`).join('')}
+          </tr>
+          <tr>
+            ${summaryRows.map(() => `<th style="${TH}">m³</th><th style="${TH}">$</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="${TD}"><strong>Ingreso GNC (m³)</strong></td>
+            ${summaryRows.map(r => `<td style="${TD_NUM}">${r.gncIngreso}</td><td></td>`).join('')}
+          </tr>
+          <tr>
+            <td style="${TD}"><strong>Mermas/Excedencias (m³)</strong></td>
+            ${summaryRows.map(r => `<td style="${TD_NUM}">${r.gncMermasExcedencias >= 0 ? '+' : ''}${r.gncMermasExcedencias}</td><td></td>`).join('')}
+          </tr>
+          <tr>
+            <td style="${TD}"><strong>% Mermas/Excedencias</strong></td>
+            ${summaryRows.map(r => `<td style="${TD_NUM}">${r.gncPorcentaje.toFixed(2)}%</td><td></td>`).join('')}
+          </tr>
+          <tr>
+            <td style="${TD}"><strong>Ventas GNC (m³)</strong></td>
+            ${summaryRows.map(r => `<td style="${TD_NUM}">${r.gncVentasM3}</td><td></td>`).join('')}
+          </tr>
+          <tr>
+            <td style="${TD}"><strong>Precio unitario GNC ($/m³)</strong></td>
+            ${summaryRows.map(r => `<td></td><td style="${TD_NUM}">${formatArs(r.gncPrecioUnitario)}</td>`).join('')}
+          </tr>
+          <tr>
+            <td style="${TD}"><strong>Importe total GNC</strong></td>
+            ${summaryRows.map(r => `<td></td><td style="${TD_NUM}"><strong>${formatArs(r.gncImporteTotal)}</strong></td>`).join('')}
+          </tr>
+          <tr>
+            <td style="${TD}"><strong>Importe lubricantes y varios</strong></td>
+            ${summaryRows.map(r => `<td></td><td style="${TD_NUM}"><strong>${formatArs(r.lubricantesVariosImporte)}</strong></td>`).join('')}
+          </tr>
+          <tr>
+            <td style="${TD}"><strong>Facturado playeros</strong></td>
+            ${summaryRows.map(r => `<td></td><td style="${TD_NUM}">${formatArs(r.facturadoPlayeros)}</td>`).join('')}
+          </tr>
+          <tr>
+            <td style="${TD}"><strong>Facturación servicios/materiales</strong></td>
+            ${summaryRows.map(r => `<td></td><td style="${TD_NUM}">${formatArs(r.facturacionServicios)}</td>`).join('')}
+          </tr>
+          <tr>
+            <td style="${TD}"><strong>Facturación mini mercado</strong></td>
+            ${summaryRows.map(r => `<td></td><td style="${TD_NUM}">${formatArs(r.facturacionMiniMercado)}</td>`).join('')}
+          </tr>
+          <tr style="background:var(--paper-head)">
+            <td style="${TD}"><strong>TOTAL RECAUDACIÓN</strong></td>
+            ${summaryRows.map(r => `<td></td><td style="${TD_NUM}"><strong>${formatArs(r.totalRecaudacion)}</strong></td>`).join('')}
+          </tr>
+        </tbody>
+      </table>
+      
+      <div class="seccion-papel" style="margin-top:1rem">
+        <h2>Observaciones</h2>
+        <form method="post" action="/operativa/resumen-diario/observaciones">
+          <input type="hidden" name="fecha" value="${fechaInput}">
+          <textarea name="observaciones" rows="4" style="width:100%;font-family:inherit;padding:0.5rem">${escapeHtml(observaciones)}</textarea>
+          <button type="submit" style="margin-top:0.5rem">Guardar observaciones</button>
+        </form>
+      </div>
+      
+      ${cash[0] ? `
+      <div class="seccion-papel" style="margin-top:1rem">
+        <h2>Depósito bancario</h2>
+        <p class="muted">Importe total depositado: <strong>${formatArs(cash[0].closingCountedCents ?? 0)}</strong></p>
+        <p class="muted">Recibo: ${cash[0].notes ?? '—'}</p>
+        <p class="muted">Fecha depósito: ${cash[0].closedAt ? fmtDay(new Date(cash[0].closedAt)) : '—'}</p>
+        <p class="muted">Responsable: ${cash[0].closedBy ? 'ID: ' + cash[0].closedBy : '—'}</p>
+      </div>
+      ` : ''}
+    </div>`,
+  );
+});
+
+operativaRoutes.post('/operativa/resumen-diario/observaciones', requireRole('admin'), async (c) => {
+  const db = dbOf(c);
+  const body = await c.req.parseBody();
+  const access = await resolveStore(c, db, body.tienda);
+  if ('error' in access) return denied(c, access.error);
+  const fecha = dayStart(str(body.fecha));
+  if (!fecha) {
+    return fail(c, 'Resumen diario', 'Fecha inválida', '/operativa/resumen-diario');
+  }
+  const existing = await db
+    .select()
+    .from(dailyActivitySummary)
+    .where(
+      and(
+        eq(dailyActivitySummary.storeId, access.storeId),
+        eq(dailyActivitySummary.reportDate, fecha),
+      ),
+    )
+    .limit(1);
+  const observaciones = str(body.observaciones);
+  if (existing[0]) {
+    await db
+      .update(dailyActivitySummary)
+      .set({ observaciones, updatedAt: new Date() })
+      .where(eq(dailyActivitySummary.id, existing[0].id));
+  } else {
+    await db.insert(dailyActivitySummary).values({
+      storeId: access.storeId,
+      reportDate: fecha,
+      observaciones,
+    });
+  }
+  return c.redirect(`/operativa/resumen-diario?fecha=${dateInput(fecha)}&aviso=1`);
+});
+
 operativaRoutes.get('/operativa/lubricantes', async (c) => {
   const db = dbOf(c);
   const user = c.get('user')!;
@@ -1965,6 +2256,8 @@ operativaRoutes.get('/operativa/lubricantes/nuevo', async (c) => {
         <select id="tienda" name="tienda">${storesHtml}</select>
         <label for="fecha">Fecha del conteo</label>
         <input id="fecha" name="fecha" type="date" required value="${todayInput()}">
+        <label for="turno">Turno</label>
+        <select id="turno" name="turno">${shiftOptions()}</select>
         <label for="producto">Vincular a un producto de la tienda (opcional)</label>
         <select id="producto" name="producto">${productOptions}</select>
         <label for="marca">Marca</label>
@@ -1975,13 +2268,17 @@ operativaRoutes.get('/operativa/lubricantes/nuevo', async (c) => {
         <input id="envase_l" name="envase_l" type="number" step="0.001" min="0" required placeholder="Ej.: 1">
         <label for="apertura">Stock de apertura (unidades)</label>
         <input id="apertura" name="apertura" type="number" step="1" min="0" value="0" required>
-        <label for="entradas">Entradas (unidades)</label>
-        <input id="entradas" name="entradas" type="number" step="1" min="0" value="0" required>
+        <label for="recibidos">Recibidos (unidades)</label>
+        <input id="recibidos" name="recibidos" type="number" step="1" min="0" value="0" required>
+        <label for="vendidos">Vendidos (unidades)</label>
+        <input id="vendidos" name="vendidos" type="number" step="1" min="0" value="0" required>
+        <label for="entregados">Entregados (unidades)</label>
+        <input id="entregados" name="entregados" type="number" step="1" min="0" value="0" required>
         <label for="salidas">Salidas (unidades)</label>
         <input id="salidas" name="salidas" type="number" step="1" min="0" value="0" required>
         <label for="precio">Precio unitario (pesos)</label>
         <input id="precio" name="precio" type="number" step="0.01" min="0" value="0" required>
-        <p class="muted">El stock de cierre se calcula solo: apertura + entradas − salidas.</p>
+        <p class="muted">El stock de cierre se calcula: apertura + recibidos + entradas − vendidos − entregados − salidas.</p>
         <button type="submit">Guardá el recuento</button>
       </form>
       <p><a href="/operativa/lubricantes">Volver al listado</a></p>
@@ -2033,6 +2330,9 @@ operativaRoutes.post('/operativa/lubricantes', async (c) => {
   const apertura = qtyFrom(body.apertura);
   const entradas = qtyFrom(body.entradas);
   const salidas = qtyFrom(body.salidas);
+  const recibidos = qtyFrom(body.recibidos) ?? 0;
+  const vendidos = qtyFrom(body.vendidos) ?? 0;
+  const entregados = qtyFrom(body.entregados) ?? 0;
   if (apertura === null) {
     return fail(
       c,
@@ -2057,7 +2357,7 @@ operativaRoutes.post('/operativa/lubricantes', async (c) => {
       '/operativa/lubricantes/nuevo',
     );
   }
-  const cierre = apertura + entradas - salidas;
+  const cierre = apertura + recibidos + entradas - vendidos - entregados - salidas;
   if (cierre < 0) {
     return fail(
       c,
@@ -2111,6 +2411,9 @@ operativaRoutes.post('/operativa/lubricantes', async (c) => {
     exitsQty: salidas,
     closingQty: cierre,
     unitPriceCents: precio,
+    recibidosQty: recibidos,
+    vendidosQty: vendidos,
+    entregadosQty: entregados,
   });
   return c.redirect('/operativa/lubricantes?aviso=1');
 });
@@ -2415,29 +2718,213 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
     `<div class="card">
       <h1>Rendición de turno</h1>
       <form method="post" action="/operativa/rendicion">
-        <label for="tienda">Tienda</label>
-        <select id="tienda" name="tienda">${storesHtml}</select>
-        <label for="fecha">Fecha del día</label>
-        <input id="fecha" name="fecha" type="date" required value="${todayInput()}">
-        <label for="turno">Turno</label>
-        <select id="turno" name="turno">${shiftOptions()}</select>
-        <label for="inicio">Inicio del turno</label>
-        <input id="inicio" name="inicio" type="datetime-local" required>
-        <label for="fin">Fin del turno</label>
-        <input id="fin" name="fin" type="datetime-local" required>
-        <label for="apertura">Efectivo de apertura (pesos)</label>
-        <input id="apertura" name="apertura" type="number" step="0.01" min="0" value="0" required>
-        <label for="cierre">Efectivo de cierre (pesos)</label>
-        <input id="cierre" name="cierre" type="number" step="0.01" min="0" value="0" required>
-        <label for="notas">Notas (opcional)</label>
-        <input id="notas" name="notas" type="text">
-        <h2 style="margin-top:1.25rem">Lecturas de surtidores</h2>
+        <h2>Datos del turno</h2>
+        <div class="grid">
+          <div>
+            <label for="tienda">Tienda</label>
+            <select id="tienda" name="tienda">${storesHtml}</select>
+          </div>
+          <div>
+            <label for="fecha">Fecha</label>
+            <input id="fecha" name="fecha" type="date" required value="${todayInput()}">
+          </div>
+          <div>
+            <label for="turno">Turno</label>
+            <select id="turno" name="turno">${shiftOptions()}</select>
+          </div>
+          <div>
+            <label for="operador">Operador</label>
+            <input id="operador" name="operador" type="text" required value="${escapeHtml(user.name)}" readonly>
+          </div>
+        </div>
+        <div class="grid">
+          <div>
+            <label for="inicio">Inicio del turno</label>
+            <input id="inicio" name="inicio" type="datetime-local" required>
+          </div>
+          <div>
+            <label for="fin">Fin del turno</label>
+            <input id="fin" name="fin" type="datetime-local" required>
+          </div>
+        </div>
+        
+        <h2 style="margin-top:1.25rem">Lecturas de surtidores (GNC)</h2>
         <p class="muted">Completá una fila por surtidor y boquilla usados en el turno.</p>
         ${readingsFormHtml()}
+        
+        <h2 style="margin-top:1.25rem">Ventas del turno</h2>
+        <div class="grid">
+          <div>
+            <label for="gnc_qty">GNC - Cantidad (m³)</label>
+            <input id="gnc_qty" name="gnc_qty" type="number" step="0.01" min="0" value="0">
+          </div>
+          <div>
+            <label for="gnc_price">GNC - Precio unitario (pesos/m³)</label>
+            <input id="gnc_price" name="gnc_price" type="number" step="0.01" min="0" value="0">
+          </div>
+          <div>
+            <label for="gnc_sales">GNC - Importe (pesos)</label>
+            <input id="gnc_sales" name="gnc_sales" type="number" step="0.01" min="0" value="0" readonly style="background:#f5f5f5">
+          </div>
+          <div>
+            <label for="lubricantes_qty">Lubricantes - Cantidad</label>
+            <input id="lubricantes_qty" name="lubricantes_qty" type="number" step="1" min="0" value="0">
+          </div>
+          <div>
+            <label for="lubricantes_price">Lubricantes - Precio unitario (pesos)</label>
+            <input id="lubricantes_price" name="lubricantes_price" type="number" step="0.01" min="0" value="0">
+          </div>
+          <div>
+            <label for="lubricantes_sales">Lubricantes - Importe (pesos)</label>
+            <input id="lubricantes_sales" name="lubricantes_sales" type="number" step="0.01" min="0" value="0" readonly style="background:#f5f5f5">
+          </div>
+          <div>
+            <label for="varios_qty">Varios - Cantidad</label>
+            <input id="varios_qty" name="varios_qty" type="number" step="1" min="0" value="0">
+          </div>
+          <div>
+            <label for="varios_price">Varios - Precio unitario (pesos)</label>
+            <input id="varios_price" name="varios_price" type="number" step="0.01" min="0" value="0">
+          </div>
+          <div>
+            <label for="varios_sales">Varios - Importe (pesos)</label>
+            <input id="varios_sales" name="varios_sales" type="number" step="0.01" min="0" value="0" readonly style="background:#f5f5f5">
+          </div>
+          <div style="grid-column:1/-1">
+            <label for="total_sales">Total ventas del turno (pesos)</label>
+            <input id="total_sales" name="total_sales" type="number" step="0.01" min="0" value="0" readonly style="background:#f5f5f5;font-weight:700;font-size:1.1rem">
+          </div>
+        </div>
+        
+        <h2 style="margin-top:1.25rem">Recaudación ensobrada</h2>
+        <p class="muted">Registrá cada sobre con su hora e importe.</p>
+        <div class="grid">
+          <div>
+            <label for="sobre1_hora">Sobre 1 - Hora</label>
+            <input id="sobre1_hora" name="sobre1_hora" type="time">
+          </div>
+          <div>
+            <label for="sobre1_importe">Sobre 1 - Importe (pesos)</label>
+            <input id="sobre1_importe" name="sobre1_importe" type="number" step="0.01" min="0" value="0">
+          </div>
+          <div>
+            <label for="sobre2_hora">Sobre 2 - Hora</label>
+            <input id="sobre2_hora" name="sobre2_hora" type="time">
+          </div>
+          <div>
+            <label for="sobre2_importe">Sobre 2 - Importe (pesos)</label>
+            <input id="sobre2_importe" name="sobre2_importe" type="number" step="0.01" min="0" value="0">
+          </div>
+          <div>
+            <label for="sobre3_hora">Sobre 3 - Hora</label>
+            <input id="sobre3_hora" name="sobre3_hora" type="time">
+          </div>
+          <div>
+            <label for="sobre3_importe">Sobre 3 - Importe (pesos)</label>
+            <input id="sobre3_importe" name="sobre3_importe" type="number" step="0.01" min="0" value="0">
+          </div>
+          <div>
+            <label for="sobre4_hora">Sobre 4 - Hora</label>
+            <input id="sobre4_hora" name="sobre4_hora" type="time">
+          </div>
+          <div>
+            <label for="sobre4_importe">Sobre 4 - Importe (pesos)</label>
+            <input id="sobre4_importe" name="sobre4_importe" type="number" step="0.01" min="0" value="0">
+          </div>
+          <div>
+            <label for="sobre5_hora">Sobre 5 - Hora</label>
+            <input id="sobre5_hora" name="sobre5_hora" type="time">
+          </div>
+          <div>
+            <label for="sobre5_importe">Sobre 5 - Importe (pesos)</label>
+            <input id="sobre5_importe" name="sobre5_importe" type="number" step="0.01" min="0" value="0">
+          </div>
+          <div>
+            <label for="sobre6_hora">Sobre 6 - Hora</label>
+            <input id="sobre6_hora" name="sobre6_hora" type="time">
+          </div>
+          <div>
+            <label for="sobre6_importe">Sobre 6 - Importe (pesos)</label>
+            <input id="sobre6_importe" name="sobre6_importe" type="number" step="0.01" min="0" value="0">
+          </div>
+          <div style="grid-column:1/-1">
+            <label for="total_ensobrado">Total ensobrado (pesos)</label>
+            <input id="total_ensobrado" name="total_ensobrado" type="number" step="0.01" min="0" value="0" readonly style="background:#f5f5f5;font-weight:700">
+          </div>
+        </div>
+        
+        <h2 style="margin-top:1.25rem">Fondo de cambio transferido</h2>
+        <div class="grid">
+          <div>
+            <label for="fondo_cambio_saliente">Operación saliente (pesos)</label>
+            <input id="fondo_cambio_saliente" name="fondo_cambio_saliente" type="number" step="0.01" min="0" value="0">
+          </div>
+          <div>
+            <label for="fondo_cambio_entrante">Operación entrante (pesos)</label>
+            <input id="fondo_cambio_entrante" name="fondo_cambio_entrante" type="number" step="0.01" min="0" value="0">
+          </div>
+        </div>
+        
+        <h2 style="margin-top:1.25rem">Vales de empleados</h2>
+        <div class="grid">
+          <div>
+            <label for="vales_empleados">Importe vales (pesos)</label>
+            <input id="vales_empleados" name="vales_empleados" type="number" step="0.01" min="0" value="0">
+          </div>
+          <div style="align-self:flex-end">
+            <label style="display:flex;gap:0.5rem;align-items:center;font-weight:400">
+              <input type="checkbox" name="vales_alerta" value="on" checked style="width:auto">
+              <span class="muted">Alerta: No podrán tener más de $20.000 por billetera en caso de robo. La diferencia mayor será abonada por ustedes.</span>
+            </label>
+          </div>
+        </div>
+        
+        <h2 style="margin-top:1.25rem">Control de caja</h2>
+        <div class="grid">
+          <div>
+            <label for="apertura">Efectivo de apertura (pesos)</label>
+            <input id="apertura" name="apertura" type="number" step="0.01" min="0" value="0" required>
+          </div>
+          <div>
+            <label for="cierre">Efectivo de cierre (pesos)</label>
+            <input id="cierre" name="cierre" type="number" step="0.01" min="0" value="0" required>
+          </div>
+        </div>
+        
+        <label for="notas">Observaciones (opcional)</label>
+        <textarea id="notas" name="notas" rows="3" placeholder="Observaciones del turno..."></textarea>
+        
         <button type="submit">Guardá la rendición</button>
       </form>
       <p><a href="/operativa/rendicion">Volver al listado</a></p>
-    </div>`,
+    </div>
+    <script>
+      (function() {
+        function cents(v) { return Math.round(parseFloat(v || 0) * 100); }
+        function fmt(v) { return (v/100).toFixed(2); }
+        function calc() {
+          // Ventas
+          const gnc = cents(document.getElementById('gnc_qty').value) * cents(document.getElementById('gnc_price').value) / 10000;
+          const lub = cents(document.getElementById('lubricantes_qty').value) * cents(document.getElementById('lubricantes_price').value) / 10000;
+          const var_ = cents(document.getElementById('varios_qty').value) * cents(document.getElementById('varios_price').value) / 10000;
+          document.getElementById('gnc_sales').value = fmt(gnc);
+          document.getElementById('lubricantes_sales').value = fmt(lub);
+          document.getElementById('varios_sales').value = fmt(var_);
+          document.getElementById('total_sales').value = fmt(gnc + lub + var_);
+          // Ensobrado
+          let totalEns = 0;
+          for (let i=1; i<=6; i++) {
+            totalEns += cents(document.getElementById('sobre'+i+'_importe').value);
+          }
+          document.getElementById('total_ensobrado').value = fmt(totalEns);
+        }
+        document.querySelectorAll('input[type="number"]').forEach(function(el) {
+          el.addEventListener('input', calc);
+        });
+        // Initial calc
+        calc();
+      })();
+    </script>`,
   );
 });
 
@@ -2532,6 +3019,41 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
   if (typeof readings === 'string') {
     return fail(c, 'Rendición de turno', readings, '/operativa/rendicion/nuevo');
   }
+  
+  // Parse new fields
+  const gncQty = qtyFrom(body.gnc_qty) ?? 0;
+  const gncPriceCents = centsFrom(body.gnc_price) ?? 0;
+  const gncSalesCents = centsFrom(body.gnc_sales) ?? Math.round(gncQty * gncPriceCents);
+  const lubricantesQty = qtyFrom(body.lubricantes_qty) ?? 0;
+  const lubricantesPriceCents = centsFrom(body.lubricantes_price) ?? 0;
+  const lubricantesSalesCents = centsFrom(body.lubricantes_sales) ?? Math.round(lubricantesQty * lubricantesPriceCents);
+  const variosQty = qtyFrom(body.varios_qty) ?? 0;
+  const variosPriceCents = centsFrom(body.varios_price) ?? 0;
+  const variosSalesCents = centsFrom(body.varios_sales) ?? Math.round(variosQty * variosPriceCents);
+  const totalSalesCents = gncSalesCents + lubricantesSalesCents + variosSalesCents;
+  
+  const sobre1Hora = str(body.sobre1_hora) || null;
+  const sobre1ImporteCents = centsFrom(body.sobre1_importe) ?? 0;
+  const sobre2Hora = str(body.sobre2_hora) || null;
+  const sobre2ImporteCents = centsFrom(body.sobre2_importe) ?? 0;
+  const sobre3Hora = str(body.sobre3_hora) || null;
+  const sobre3ImporteCents = centsFrom(body.sobre3_importe) ?? 0;
+  const sobre4Hora = str(body.sobre4_hora) || null;
+  const sobre4ImporteCents = centsFrom(body.sobre4_importe) ?? 0;
+  const sobre5Hora = str(body.sobre5_hora) || null;
+  const sobre5ImporteCents = centsFrom(body.sobre5_importe) ?? 0;
+  const sobre6Hora = str(body.sobre6_hora) || null;
+  const sobre6ImporteCents = centsFrom(body.sobre6_importe) ?? 0;
+  const totalEnsobradoCents = sobre1ImporteCents + sobre2ImporteCents + sobre3ImporteCents + sobre4ImporteCents + sobre5ImporteCents + sobre6ImporteCents;
+  
+  const fondoCambioSalienteCents = centsFrom(body.fondo_cambio_saliente) ?? 0;
+  const fondoCambioEntranteCents = centsFrom(body.fondo_cambio_entrante) ?? 0;
+  
+  const valesEmpleadosCents = centsFrom(body.vales_empleados) ?? 0;
+  const valesAlerta = str(body.vales_alerta) === 'on';
+  
+  const observaciones = str(body.notas) || null;
+  
   const inserted = await db
     .insert(shiftReports)
     .values({
@@ -2543,7 +3065,35 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
       cashierId: user.id,
       openingCents: apertura,
       closingCents: cierre,
-      notes: str(body.notas) || null,
+      gncQty,
+      gncPriceCents,
+      gncSalesCents,
+      lubricantesQty,
+      lubricantesPriceCents,
+      lubricantesSalesCents,
+      variosQty,
+      variosPriceCents,
+      variosSalesCents,
+      totalSalesCents,
+      sobre1Hora,
+      sobre1ImporteCents,
+      sobre2Hora,
+      sobre2ImporteCents,
+      sobre3Hora,
+      sobre3ImporteCents,
+      sobre4Hora,
+      sobre4ImporteCents,
+      sobre5Hora,
+      sobre5ImporteCents,
+      sobre6Hora,
+      sobre6ImporteCents,
+      totalEnsobradoCents,
+      fondoCambioSalienteCents,
+      fondoCambioEntranteCents,
+      valesEmpleadosCents,
+      valesAlerta,
+      observaciones,
+      notes: null,
     })
     .returning({ id: shiftReports.id });
   const reportId = inserted[0]!.id;

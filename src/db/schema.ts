@@ -447,7 +447,7 @@ export const userActivity = sqliteTable(
   }),
 );
 
-export const SHIFT_VALUES = ['morning', 'evening', 'night'] as const;
+export const SHIFT_VALUES = ['morning', 'evening', 'night', 'adicional'] as const;
 
 export const CASH_STATUS_VALUES = ['open', 'closed'] as const;
 
@@ -618,6 +618,9 @@ export const lubricantStocks = sqliteTable(
     exitsQty: integer('exits_qty').notNull().default(0),
     closingQty: integer('closing_qty').notNull().default(0),
     unitPriceCents: integer('unit_price_cents').notNull().default(0),
+    recibidosQty: integer('recibidos_qty').notNull().default(0),
+    vendidosQty: integer('vendidos_qty').notNull().default(0),
+    entregadosQty: integer('entregados_qty').notNull().default(0),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -626,7 +629,7 @@ export const lubricantStocks = sqliteTable(
     containerChk: check('lubricant_stocks_container_chk', sql`container_l > 0`),
     qtyChk: check(
       'lubricant_stocks_qty_chk',
-      sql`opening_qty >= 0 and entries_qty >= 0 and exits_qty >= 0 and closing_qty >= 0`,
+      sql`opening_qty >= 0 and entries_qty >= 0 and exits_qty >= 0 and closing_qty >= 0 and recibidos_qty >= 0 and vendidos_qty >= 0 and entregados_qty >= 0`,
     ),
     priceChk: check(
       'lubricant_stocks_price_chk',
@@ -651,6 +654,34 @@ export const shiftReports = sqliteTable(
     }),
     openingCents: integer('opening_cents').notNull().default(0),
     closingCents: integer('closing_cents').notNull().default(0),
+    gncQty: integer('gnc_qty').notNull().default(0),
+    gncPriceCents: integer('gnc_price_cents').notNull().default(0),
+    gncSalesCents: integer('gnc_sales_cents').notNull().default(0),
+    lubricantesQty: integer('lubricantes_qty').notNull().default(0),
+    lubricantesPriceCents: integer('lubricantes_price_cents').notNull().default(0),
+    lubricantesSalesCents: integer('lubricantes_sales_cents').notNull().default(0),
+    variosQty: integer('varios_qty').notNull().default(0),
+    variosPriceCents: integer('varios_price_cents').notNull().default(0),
+    variosSalesCents: integer('varios_sales_cents').notNull().default(0),
+    totalSalesCents: integer('total_sales_cents').notNull().default(0),
+    sobre1Hora: text('sobre_1_hora'),
+    sobre1ImporteCents: integer('sobre_1_importe_cents').notNull().default(0),
+    sobre2Hora: text('sobre_2_hora'),
+    sobre2ImporteCents: integer('sobre_2_importe_cents').notNull().default(0),
+    sobre3Hora: text('sobre_3_hora'),
+    sobre3ImporteCents: integer('sobre_3_importe_cents').notNull().default(0),
+    sobre4Hora: text('sobre_4_hora'),
+    sobre4ImporteCents: integer('sobre_4_importe_cents').notNull().default(0),
+    sobre5Hora: text('sobre_5_hora'),
+    sobre5ImporteCents: integer('sobre_5_importe_cents').notNull().default(0),
+    sobre6Hora: text('sobre_6_hora'),
+    sobre6ImporteCents: integer('sobre_6_importe_cents').notNull().default(0),
+    totalEnsobradoCents: integer('total_ensobrado_cents').notNull().default(0),
+    fondoCambioSalienteCents: integer('fondo_cambio_saliente_cents').notNull().default(0),
+    fondoCambioEntranteCents: integer('fondo_cambio_entrante_cents').notNull().default(0),
+    valesEmpleadosCents: integer('vales_empleados_cents').notNull().default(0),
+    valesAlerta: integer('vales_alerta', { mode: 'boolean' }).notNull().default(true),
+    observaciones: text('observaciones'),
     notes: text('notes'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -665,7 +696,7 @@ export const shiftReports = sqliteTable(
     cashierIdx: index('shift_reports_cashier_idx').on(t.cashierId),
     shiftChk: check(
       'shift_reports_shift_chk',
-      sql`shift in ('morning','evening','night')`,
+      sql`shift in ('morning','evening','night','adicional')`,
     ),
     windowChk: check('shift_reports_window_chk', sql`shift_end > shift_start`),
     cashChk: check(
@@ -732,6 +763,8 @@ export const raffleCoupons = sqliteTable(
     holderName: text('holder_name').notNull(),
     holderEmail: text('holder_email'),
     holderPhone: text('holder_phone'),
+    holderDni: text('holder_dni'),
+    holderAddress: text('holder_address'),
     issuedAt: integer('issued_at', { mode: 'timestamp_ms' })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
@@ -743,5 +776,70 @@ export const raffleCoupons = sqliteTable(
   },
   (t) => ({
     storeIdx: index('raffle_coupons_store_idx').on(t.storeId, t.issuedAt),
+  }),
+);
+
+export const dailyActivitySummary = sqliteTable(
+  'daily_activity_summary',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    storeId: integer('store_id')
+      .notNull()
+      .references(() => stores.id, { onDelete: 'cascade' }),
+    reportDate: integer('report_date', { mode: 'timestamp_ms' }).notNull(),
+    mananaGncIngreso: integer('manana_gnc_ingreso').notNull().default(0),
+    mananaGncMermasExcedencias: integer('manana_gnc_mermas_excedencias').notNull().default(0),
+    mananaGncPorcentaje: real('manana_gnc_porcentaje').notNull().default(0),
+    mananaGncVentasM3: integer('manana_gnc_ventas_m3').notNull().default(0),
+    mananaGncPrecioUnitario: integer('manana_gnc_precio_unitario').notNull().default(0),
+    mananaGncImporteTotal: integer('manana_gnc_importe_total').notNull().default(0),
+    mananaLubricantesVariosImporte: integer('manana_lubricantes_varios_importe').notNull().default(0),
+    mananaFacturadoPlayeros: integer('manana_facturado_playeros').notNull().default(0),
+    mananaFacturacionServicios: integer('manana_facturacion_servicios').notNull().default(0),
+    mananaFacturacionMiniMercado: integer('manana_facturacion_mini_mercado').notNull().default(0),
+    mananaTotalRecaudacion: integer('manana_total_recaudacion').notNull().default(0),
+    tardeGncIngreso: integer('tarde_gnc_ingreso').notNull().default(0),
+    tardeGncMermasExcedencias: integer('tarde_gnc_mermas_excedencias').notNull().default(0),
+    tardeGncPorcentaje: real('tarde_gnc_porcentaje').notNull().default(0),
+    tardeGncVentasM3: integer('tarde_gnc_ventas_m3').notNull().default(0),
+    tardeGncPrecioUnitario: integer('tarde_gnc_precio_unitario').notNull().default(0),
+    tardeGncImporteTotal: integer('tarde_gnc_importe_total').notNull().default(0),
+    tardeLubricantesVariosImporte: integer('tarde_lubricantes_varios_importe').notNull().default(0),
+    tardeFacturadoPlayeros: integer('tarde_facturado_playeros').notNull().default(0),
+    tardeFacturacionServicios: integer('tarde_facturacion_servicios').notNull().default(0),
+    tardeFacturacionMiniMercado: integer('tarde_facturacion_mini_mercado').notNull().default(0),
+    tardeTotalRecaudacion: integer('tarde_total_recaudacion').notNull().default(0),
+    nocheGncIngreso: integer('noche_gnc_ingreso').notNull().default(0),
+    nocheGncMermasExcedencias: integer('noche_gnc_mermas_excedencias').notNull().default(0),
+    nocheGncPorcentaje: real('noche_gnc_porcentaje').notNull().default(0),
+    nocheGncVentasM3: integer('noche_gnc_ventas_m3').notNull().default(0),
+    nocheGncPrecioUnitario: integer('noche_gnc_precio_unitario').notNull().default(0),
+    nocheGncImporteTotal: integer('noche_gnc_importe_total').notNull().default(0),
+    nocheLubricantesVariosImporte: integer('noche_lubricantes_varios_importe').notNull().default(0),
+    nocheFacturadoPlayeros: integer('noche_facturado_playeros').notNull().default(0),
+    nocheFacturacionServicios: integer('noche_facturacion_servicios').notNull().default(0),
+    nocheFacturacionMiniMercado: integer('noche_facturacion_mini_mercado').notNull().default(0),
+    nocheTotalRecaudacion: integer('noche_total_recaudacion').notNull().default(0),
+    adicionalGncIngreso: integer('adicional_gnc_ingreso').notNull().default(0),
+    adicionalGncMermasExcedencias: integer('adicional_gnc_mermas_excedencias').notNull().default(0),
+    adicionalGncPorcentaje: real('adicional_gnc_porcentaje').notNull().default(0),
+    adicionalGncVentasM3: integer('adicional_gnc_ventas_m3').notNull().default(0),
+    adicionalGncPrecioUnitario: integer('adicional_gnc_precio_unitario').notNull().default(0),
+    adicionalGncImporteTotal: integer('adicional_gnc_importe_total').notNull().default(0),
+    adicionalLubricantesVariosImporte: integer('adicional_lubricantes_varios_importe').notNull().default(0),
+    adicionalFacturadoPlayeros: integer('adicional_facturado_playeros').notNull().default(0),
+    adicionalFacturacionServicios: integer('adicional_facturacion_servicios').notNull().default(0),
+    adicionalFacturacionMiniMercado: integer('adicional_facturacion_mini_mercado').notNull().default(0),
+    adicionalTotalRecaudacion: integer('adicional_total_recaudacion').notNull().default(0),
+    observaciones: text('observaciones'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => ({
+    storeDateUq: uniqueIndex('daily_activity_summary_store_date_uq').on(
+      t.storeId,
+      t.reportDate,
+    ),
+    storeIdx: index('daily_activity_summary_store_idx').on(t.storeId, t.reportDate),
   }),
 );

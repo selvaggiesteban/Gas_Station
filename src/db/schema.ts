@@ -554,7 +554,7 @@ export const salesSummaries = sqliteTable(
     storeIdx: index('sales_summaries_store_idx').on(t.storeId, t.reportDate),
     shiftChk: check(
       'sales_summaries_shift_chk',
-      sql`shift in ('morning','evening','night')`,
+      sql`shift in ('morning','evening','night','adicional')`,
     ),
     amountsChk: check(
       'sales_summaries_amounts_chk',
@@ -590,7 +590,7 @@ export const dailyActivities = sqliteTable(
     storeIdx: index('daily_activities_store_idx').on(t.storeId, t.reportDate),
     shiftChk: check(
       'daily_activities_shift_chk',
-      sql`shift in ('morning','evening','night')`,
+      sql`shift in ('morning','evening','night','adicional')`,
     ),
     gncChk: check(
       'daily_activities_gnc_chk',

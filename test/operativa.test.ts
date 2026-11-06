@@ -83,6 +83,13 @@ async function count(table: string): Promise<number> {
   return row?.n ?? 0;
 }
 
+function formatArs(cents: number): string {
+  return new Intl.NumberFormat('es-AR', {
+    style: 'currency',
+    currency: 'ARS',
+  }).format(cents / 100);
+}
+
 describe('operativa', () => {
   it('/operativa responde 200 logueado y redirige a login sin sesión', async () => {
     const sinSesion = await get('/operativa');
@@ -765,7 +772,10 @@ describe('operativa', () => {
 
     const listado = await get('/operativa/rendicion', cookie);
     expect(listado.status).toBe(200);
-    expect(await listado.text()).toContain('Ventas');
+    const htmlListado = await listado.text();
+    expect(htmlListado).toContain('Ventas');
+    expect(htmlListado).toContain('Ensobrado');
+    expect(htmlListado).toContain(formatArs(850000));
   });
 
   it('sorteo: exige DNI y dirección y los muestra en el listado', async () => {
@@ -913,5 +923,108 @@ describe('operativa', () => {
     const tras = await get('/operativa/resumen-diario?fecha=2026-11-05', admin);
     expect(tras.status).toBe(200);
     expect(await tras.text()).toContain('todo en orden');
+  });
+
+  it('caja: el turno adicional entra en las entradas y en el total de turnos', async () => {
+    const cookie = await registerAs(
+      'Caja Adicional',
+      uniqueEmail('caja-adicional'),
+      'admin',
+    );
+    const fecha = '2026-11-11';
+    const dia = Date.UTC(2026, 10, 11);
+
+    const abierta = await post('/operativa/caja', { fecha, apertura: '0' }, cookie);
+    expect(abierta.status).toBe(302);
+
+    await env.DB.prepare(
+      `
+      insert into sales_summaries (store_id, report_date, shift, cash_cents, card_cents, transfer_cents, credit_cents, total_cents, notes)
+      values (1, ?, 'adicional', 0, 0, 0, 0, 75000, 'test')
+    `,
+    )
+      .bind(dia)
+      .run();
+
+    const vista = await get(`/operativa/caja?fecha=${fecha}`, cookie);
+    expect(vista.status).toBe(200);
+    const html = await vista.text();
+    expect(html).toContain('TURNO ADICIONAL');
+    // totalTurnos = 0 + 0 + 0 + 75000 (adicional)
+    expect(html).toContain('TOTAL TURNOS');
+    expect(html).toContain(formatArs(75000));
+  });
+
+  it('resumen diario: lub/varios desde la rendición, facturado playeros y facturación manual', async () => {
+    const admin = await registerAs(
+      'Admin Resumen Calculo',
+      uniqueEmail('resumen-calc'),
+      'admin',
+    );
+    const fecha = '2026-11-12';
+    const dia = Date.UTC(2026, 10, 12);
+
+    // Actividad turno mañana: ingreso 1000 m³, cierre 1200 m³, ventas 1180 m³, GNC $17.700
+    await env.DB.prepare(
+      `
+      insert into daily_activities (store_id, report_date, shift, gnc_opening, gnc_closing, gnc_volume, gnc_sales_cents)
+      values (1, ?, 'morning', 1000, 1200, 1180, 1770000)
+    `,
+    )
+      .bind(dia)
+      .run();
+
+    // Rendición turno mañana: lubricantes $3.000 + varios $2.000
+    await env.DB.prepare(
+      `
+      insert into shift_reports (store_id, report_date, shift, shift_start, shift_end, lubricantes_sales_cents, varios_sales_cents)
+      values (1, ?, 'morning', ?, ?, 300000, 200000)
+    `,
+    )
+      .bind(dia, dia, dia + 8 * 3600_000)
+      .run();
+
+    const pagina = await get(`/operativa/resumen-diario?fecha=${fecha}`, admin);
+    expect(pagina.status).toBe(200);
+    const html = await pagina.text();
+
+    // Columna de totales del día
+    expect(html).toContain('TOTALES');
+    // Imp. lubricantes y varios = $3.000 + $2.000 (NO el total por medios de pago)
+    expect(html).toContain(formatArs(500000));
+    // Facturado playeros = GNC $17.700 + lub/varios $5.000 = $22.700
+    expect(html).toContain(formatArs(2270000));
+
+    // Carga manual: servicios del turno mañana = $1.500,50
+    const guardado = await post(
+      '/operativa/resumen-diario/facturacion',
+      {
+        fecha,
+        servicios_morning: '1500.50',
+        mini_morning: '0',
+        servicios_evening: '0',
+        mini_evening: '0',
+        servicios_night: '0',
+        mini_night: '0',
+        servicios_adicional: '0',
+        mini_adicional: '0',
+      },
+      admin,
+    );
+    expect(guardado.status).toBe(302);
+
+    const fila = await env.DB.prepare(
+      'select manana_facturacion_servicios from daily_activity_summary where report_date = ?',
+    )
+      .bind(dia)
+      .first<{ manana_facturacion_servicios: number }>();
+    expect(fila?.manana_facturacion_servicios).toBe(150050);
+
+    const tras = await get(`/operativa/resumen-diario?fecha=${fecha}`, admin);
+    expect(tras.status).toBe(200);
+    const html2 = await tras.text();
+    expect(html2).toContain('value="1500.50"');
+    // Total recaudación mañana = facturado $22.700 + servicios $1.500,50 = $24.200,50
+    expect(html2).toContain(formatArs(2420050));
   });
 });

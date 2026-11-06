@@ -272,6 +272,34 @@ function shiftOptions(selected?: string): string {
   ).join('');
 }
 
+// Prefijos de columnas por turno en daily_activity_summary
+const MANUAL_PREFIX: Record<Shift, 'manana' | 'tarde' | 'noche' | 'adicional'> = {
+  morning: 'manana',
+  evening: 'tarde',
+  night: 'noche',
+  adicional: 'adicional',
+};
+
+// Facturación de servicios/minimercado: carga manual del admin en el resumen diario
+function manualFacturacion(
+  summary: typeof dailyActivitySummary.$inferSelect | undefined,
+  shift: Shift,
+  tipo: 'Servicios' | 'MiniMercado',
+): number {
+  if (!summary) return 0;
+  const p = MANUAL_PREFIX[shift];
+  if (tipo === 'Servicios') {
+    if (p === 'manana') return summary.mananaFacturacionServicios;
+    if (p === 'tarde') return summary.tardeFacturacionServicios;
+    if (p === 'noche') return summary.nocheFacturacionServicios;
+    return summary.adicionalFacturacionServicios;
+  }
+  if (p === 'manana') return summary.mananaFacturacionMiniMercado;
+  if (p === 'tarde') return summary.tardeFacturacionMiniMercado;
+  if (p === 'noche') return summary.nocheFacturacionMiniMercado;
+  return summary.adicionalFacturacionMiniMercado;
+}
+
 function fuelOptions(selected?: string): string {
   return FUEL_PRODUCT_VALUES.map(
     (f) =>
@@ -371,7 +399,7 @@ operativaRoutes.get('/operativa', async (c) => {
         : NO_DATA,
     ),
     indexCard(
-      'Resumen de ventas (ensobrado)',
+      'Resumen de ventas',
       'Totales por medio de pago, por día y turno.',
       '/operativa/ventas',
       sales[0]
@@ -625,11 +653,16 @@ operativaRoutes.get('/operativa/caja', async (c) => {
   const cash = cashRows[0];
   const prevOpening = cash ? cash.openingCents : 0;
 
-  // Turnos: morning, evening, night → total_cents
+  // Turnos: morning, evening, night, adicional → total_cents
   const turnoManana = turnos.find(t => t.shift === 'morning');
   const turnoTarde = turnos.find(t => t.shift === 'evening');
   const turnoNoche = turnos.find(t => t.shift === 'night');
-  const totalTurnos = (turnoManana?.totalCents ?? 0) + (turnoTarde?.totalCents ?? 0) + (turnoNoche?.totalCents ?? 0);
+  const turnoAdicional = turnos.find(t => t.shift === 'adicional');
+  const totalTurnos =
+    (turnoManana?.totalCents ?? 0) +
+    (turnoTarde?.totalCents ?? 0) +
+    (turnoNoche?.totalCents ?? 0) +
+    (turnoAdicional?.totalCents ?? 0);
 
   // Líneas manuales
   const entradasManuales = lineRows.filter(l => l.side === 'entrada' && l.kind === 'movimiento');
@@ -663,6 +696,7 @@ operativaRoutes.get('/operativa/caja', async (c) => {
     { label: 'TURNO MAÑANA', amount: turnoManana?.totalCents ?? 0, isSubtotal: false },
     { label: 'TURNO TARDE', amount: turnoTarde?.totalCents ?? 0, isSubtotal: false },
     { label: 'TURNO NOCHE', amount: turnoNoche?.totalCents ?? 0, isSubtotal: false },
+    { label: 'TURNO ADICIONAL', amount: turnoAdicional?.totalCents ?? 0, isSubtotal: false },
     { label: 'TOTAL TURNOS', amount: totalTurnos, isSubtotal: true },
   ].concat(
     entradasManuales.map(l => ({ label: l.detail.toUpperCase(), amount: l.amountCents, isSubtotal: false })),
@@ -1470,7 +1504,7 @@ operativaRoutes.get('/operativa/ventas', async (c) => {
     c,
     'Resumen de ventas',
     `<div class="card">
-      <h1>Resumen de ventas (ensobrado)</h1>
+      <h1>Resumen de ventas</h1>
       <p class="muted">Un registro por tienda, día y turno. El total se suma en el servidor.</p>
       ${filterBar('/operativa/ventas', fecha, storesHtml)}
       <a class="btn" href="/operativa/ventas/nuevo">Cargá un turno</a>
@@ -1907,7 +1941,7 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
   const fechaInput = dateInput(selected);
 
   // Get all data for the day
-  const [activities, sales, shiftReportsData, cash, lubricantes] = await Promise.all([
+  const [activities, shiftReportsData, cash, lubricantes] = await Promise.all([
     db
       .select()
       .from(dailyActivities)
@@ -1919,17 +1953,6 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
         ),
       )
       .orderBy(asc(dailyActivities.shift)),
-    db
-      .select()
-      .from(salesSummaries)
-      .where(
-        and(
-          eq(salesSummaries.storeId, access.storeId),
-          gte(salesSummaries.reportDate, selected),
-          lt(salesSummaries.reportDate, nextDay(selected)),
-        ),
-      )
-      .orderBy(asc(salesSummaries.shift)),
     db
       .select()
       .from(shiftReports)
@@ -1975,12 +1998,25 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
     adicional: 'Adicional',
   };
 
+  // Resumen diario guardado: observaciones + facturación manual del admin
+  const existingSummary = await db
+    .select()
+    .from(dailyActivitySummary)
+    .where(
+      and(
+        eq(dailyActivitySummary.storeId, access.storeId),
+        eq(dailyActivitySummary.reportDate, selected),
+      ),
+    )
+    .limit(1);
+  const summary = existingSummary[0];
+  const observaciones = summary?.observaciones ?? '';
+
   // Build summary rows for each shift
   const summaryRows = shifts.map(shift => {
     const act = activities.find(a => a.shift === shift);
-    const sal = sales.find(s => s.shift === shift);
     const sr = shiftReportsData.find(s => s.shift === shift);
-    
+
     const gncIngreso = act?.gncOpening ?? 0;
     const gncCierre = act?.gncClosing ?? 0;
     const gncVentasM3 = act?.gncVolume ?? 0;
@@ -1990,11 +2026,17 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
       ? Math.round(act.gncSalesCents / gncVentasM3) 
       : 0;
     const gncImporteTotal = act?.gncSalesCents ?? 0;
-    const lubricantesVariosImporte = sal?.totalCents ?? 0;
-    const facturadoPlayeros = sr?.totalSalesCents ?? 0;
-    const facturacionServicios = sr?.fondoCambioSalienteCents ?? 0;
-    const facturacionMiniMercado = sr?.fondoCambioEntranteCents ?? 0;
-    const totalRecaudacion = gncImporteTotal + lubricantesVariosImporte + facturadoPlayeros + facturacionServicios + facturacionMiniMercado;
+    // Planilla: Imp. ventas lubricantes y varios = rubro de la rendición del turno
+    const lubricantesVariosImporte =
+      (sr?.lubricantesSalesCents ?? 0) + (sr?.variosSalesCents ?? 0);
+    // Planilla: Facturado total playeros = GNC + lubricantes y varios
+    const facturadoPlayeros = gncImporteTotal + lubricantesVariosImporte;
+    // Carga manual del admin (columnas por turno de daily_activity_summary)
+    const facturacionServicios = manualFacturacion(summary, shift, 'Servicios');
+    const facturacionMiniMercado = manualFacturacion(summary, shift, 'MiniMercado');
+    // Planilla: Total recaudación = facturado playeros + servicios + mini mercado
+    const totalRecaudacion =
+      facturadoPlayeros + facturacionServicios + facturacionMiniMercado;
 
     return {
       shift,
@@ -2013,19 +2055,37 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
     };
   });
 
-  // Get or create daily activity summary for observations
-  const existingSummary = await db
-    .select()
-    .from(dailyActivitySummary)
-    .where(
-      and(
-        eq(dailyActivitySummary.storeId, access.storeId),
-        eq(dailyActivitySummary.reportDate, selected),
-      ),
-    )
-    .limit(1);
-  const summary = existingSummary[0];
-  const observaciones = summary?.observaciones ?? '';
+  // Columna TOTALES: suma de los cuatro turnos del día
+  const totals = summaryRows.reduce(
+    (acc, r) => ({
+      gncIngreso: acc.gncIngreso + r.gncIngreso,
+      gncMermasExcedencias: acc.gncMermasExcedencias + r.gncMermasExcedencias,
+      gncVentasM3: acc.gncVentasM3 + r.gncVentasM3,
+      gncImporteTotal: acc.gncImporteTotal + r.gncImporteTotal,
+      lubricantesVariosImporte: acc.lubricantesVariosImporte + r.lubricantesVariosImporte,
+      facturadoPlayeros: acc.facturadoPlayeros + r.facturadoPlayeros,
+      facturacionServicios: acc.facturacionServicios + r.facturacionServicios,
+      facturacionMiniMercado: acc.facturacionMiniMercado + r.facturacionMiniMercado,
+      totalRecaudacion: acc.totalRecaudacion + r.totalRecaudacion,
+    }),
+    {
+      gncIngreso: 0,
+      gncMermasExcedencias: 0,
+      gncVentasM3: 0,
+      gncImporteTotal: 0,
+      lubricantesVariosImporte: 0,
+      facturadoPlayeros: 0,
+      facturacionServicios: 0,
+      facturacionMiniMercado: 0,
+      totalRecaudacion: 0,
+    },
+  );
+  const totalsPorcentaje =
+    totals.gncIngreso > 0 ? (totals.gncMermasExcedencias / totals.gncIngreso) * 100 : 0;
+  const totalsPrecioUnitario =
+    totals.gncImporteTotal > 0 && totals.gncVentasM3 > 0
+      ? Math.round(totals.gncImporteTotal / totals.gncVentasM3)
+      : 0;
 
   const storesHtml = await storeOptions(db, access.storeId);
 
@@ -2041,63 +2101,83 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
       </form>
       <p class="muted" style="margin-top:0.5rem">Fecha: <strong>${fmtDay(selected)}</strong></p>
       
-      <table class="papel" style="margin-top:0.75rem;font-size:0.8rem">
-        <thead>
-          <tr>
-            <th style="${TH}" rowspan="2">Detalle</th>
-            ${summaryRows.map(r => `<th style="${TH}" colspan="2">${r.label}</th>`).join('')}
-          </tr>
-          <tr>
-            ${summaryRows.map(() => `<th style="${TH}">m³</th><th style="${TH}">$</th>`).join('')}
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td style="${TD}"><strong>Ingreso GNC (m³)</strong></td>
-            ${summaryRows.map(r => `<td style="${TD_NUM}">${r.gncIngreso}</td><td></td>`).join('')}
-          </tr>
-          <tr>
-            <td style="${TD}"><strong>Mermas/Excedencias (m³)</strong></td>
-            ${summaryRows.map(r => `<td style="${TD_NUM}">${r.gncMermasExcedencias >= 0 ? '+' : ''}${r.gncMermasExcedencias}</td><td></td>`).join('')}
-          </tr>
-          <tr>
-            <td style="${TD}"><strong>% Mermas/Excedencias</strong></td>
-            ${summaryRows.map(r => `<td style="${TD_NUM}">${r.gncPorcentaje.toFixed(2)}%</td><td></td>`).join('')}
-          </tr>
-          <tr>
-            <td style="${TD}"><strong>Ventas GNC (m³)</strong></td>
-            ${summaryRows.map(r => `<td style="${TD_NUM}">${r.gncVentasM3}</td><td></td>`).join('')}
-          </tr>
-          <tr>
-            <td style="${TD}"><strong>Precio unitario GNC ($/m³)</strong></td>
-            ${summaryRows.map(r => `<td></td><td style="${TD_NUM}">${formatArs(r.gncPrecioUnitario)}</td>`).join('')}
-          </tr>
-          <tr>
-            <td style="${TD}"><strong>Importe total GNC</strong></td>
-            ${summaryRows.map(r => `<td></td><td style="${TD_NUM}"><strong>${formatArs(r.gncImporteTotal)}</strong></td>`).join('')}
-          </tr>
-          <tr>
-            <td style="${TD}"><strong>Importe lubricantes y varios</strong></td>
-            ${summaryRows.map(r => `<td></td><td style="${TD_NUM}"><strong>${formatArs(r.lubricantesVariosImporte)}</strong></td>`).join('')}
-          </tr>
-          <tr>
-            <td style="${TD}"><strong>Facturado playeros</strong></td>
-            ${summaryRows.map(r => `<td></td><td style="${TD_NUM}">${formatArs(r.facturadoPlayeros)}</td>`).join('')}
-          </tr>
-          <tr>
-            <td style="${TD}"><strong>Facturación servicios/materiales</strong></td>
-            ${summaryRows.map(r => `<td></td><td style="${TD_NUM}">${formatArs(r.facturacionServicios)}</td>`).join('')}
-          </tr>
-          <tr>
-            <td style="${TD}"><strong>Facturación mini mercado</strong></td>
-            ${summaryRows.map(r => `<td></td><td style="${TD_NUM}">${formatArs(r.facturacionMiniMercado)}</td>`).join('')}
-          </tr>
-          <tr style="background:var(--paper-head)">
-            <td style="${TD}"><strong>TOTAL RECAUDACIÓN</strong></td>
-            ${summaryRows.map(r => `<td></td><td style="${TD_NUM}"><strong>${formatArs(r.totalRecaudacion)}</strong></td>`).join('')}
-          </tr>
-        </tbody>
-      </table>
+      <form method="post" action="/operativa/resumen-diario/facturacion">
+        <input type="hidden" name="fecha" value="${fechaInput}">
+        <div style="overflow-x:auto">
+        <table class="papel" style="margin-top:0.75rem;font-size:0.8rem">
+          <thead>
+            <tr>
+              <th style="${TH}" rowspan="2">Detalle</th>
+              ${summaryRows.map(r => `<th style="${TH}" colspan="2">${r.label}</th>`).join('')}
+              <th style="${TH}" colspan="2">TOTALES</th>
+            </tr>
+            <tr>
+              ${summaryRows.map(() => `<th style="${TH}">m³</th><th style="${TH}">$</th>`).join('')}
+              <th style="${TH}">m³</th><th style="${TH}">$</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="${TD}"><strong>Ingreso GNC (m³)</strong></td>
+              ${summaryRows.map(r => `<td style="${TD_NUM}">${r.gncIngreso}</td><td></td>`).join('')}
+              <td style="${TD_NUM}">${totals.gncIngreso}</td><td></td>
+            </tr>
+            <tr>
+              <td style="${TD}"><strong>Mermas/Excedencias (m³)</strong></td>
+              ${summaryRows.map(r => `<td style="${TD_NUM}">${r.gncMermasExcedencias >= 0 ? '+' : ''}${r.gncMermasExcedencias}</td><td></td>`).join('')}
+              <td style="${TD_NUM}">${totals.gncMermasExcedencias >= 0 ? '+' : ''}${totals.gncMermasExcedencias}</td><td></td>
+            </tr>
+            <tr>
+              <td style="${TD}"><strong>% Mermas/Excedencias</strong></td>
+              ${summaryRows.map(r => `<td style="${TD_NUM}">${r.gncPorcentaje.toFixed(2)}%</td><td></td>`).join('')}
+              <td style="${TD_NUM}">${totalsPorcentaje.toFixed(2)}%</td><td></td>
+            </tr>
+            <tr>
+              <td style="${TD}"><strong>Ventas GNC (m³)</strong></td>
+              ${summaryRows.map(r => `<td style="${TD_NUM}">${r.gncVentasM3}</td><td></td>`).join('')}
+              <td style="${TD_NUM}">${totals.gncVentasM3}</td><td></td>
+            </tr>
+            <tr>
+              <td style="${TD}"><strong>Precio unitario GNC ($/m³)</strong></td>
+              ${summaryRows.map(r => `<td></td><td style="${TD_NUM}">${formatArs(r.gncPrecioUnitario)}</td>`).join('')}
+              <td></td><td style="${TD_NUM}">${formatArs(totalsPrecioUnitario)}</td>
+            </tr>
+            <tr>
+              <td style="${TD}"><strong>Importe total GNC</strong></td>
+              ${summaryRows.map(r => `<td></td><td style="${TD_NUM}"><strong>${formatArs(r.gncImporteTotal)}</strong></td>`).join('')}
+              <td></td><td style="${TD_NUM}"><strong>${formatArs(totals.gncImporteTotal)}</strong></td>
+            </tr>
+            <tr>
+              <td style="${TD}"><strong>Importe lubricantes y varios</strong></td>
+              ${summaryRows.map(r => `<td></td><td style="${TD_NUM}"><strong>${formatArs(r.lubricantesVariosImporte)}</strong></td>`).join('')}
+              <td></td><td style="${TD_NUM}"><strong>${formatArs(totals.lubricantesVariosImporte)}</strong></td>
+            </tr>
+            <tr>
+              <td style="${TD}"><strong>Facturado playeros</strong></td>
+              ${summaryRows.map(r => `<td></td><td style="${TD_NUM}">${formatArs(r.facturadoPlayeros)}</td>`).join('')}
+              <td></td><td style="${TD_NUM}">${formatArs(totals.facturadoPlayeros)}</td>
+            </tr>
+            <tr>
+              <td style="${TD}"><strong>Facturación servicios/materiales</strong></td>
+              ${summaryRows.map(r => `<td></td><td style="${TD_NUM}"><input type="number" name="servicios_${r.shift}" step="0.01" min="0" value="${(r.facturacionServicios / 100).toFixed(2)}" style="width:7rem;margin:0;text-align:right" aria-label="Servicios ${r.label}"></td>`).join('')}
+              <td></td><td style="${TD_NUM}">${formatArs(totals.facturacionServicios)}</td>
+            </tr>
+            <tr>
+              <td style="${TD}"><strong>Facturación mini mercado</strong></td>
+              ${summaryRows.map(r => `<td></td><td style="${TD_NUM}"><input type="number" name="mini_${r.shift}" step="0.01" min="0" value="${(r.facturacionMiniMercado / 100).toFixed(2)}" style="width:7rem;margin:0;text-align:right" aria-label="Mini mercado ${r.label}"></td>`).join('')}
+              <td></td><td style="${TD_NUM}">${formatArs(totals.facturacionMiniMercado)}</td>
+            </tr>
+            <tr style="background:var(--paper-head)">
+              <td style="${TD}"><strong>TOTAL RECAUDACIÓN</strong></td>
+              ${summaryRows.map(r => `<td></td><td style="${TD_NUM}"><strong>${formatArs(r.totalRecaudacion)}</strong></td>`).join('')}
+              <td></td><td style="${TD_NUM}"><strong>${formatArs(totals.totalRecaudacion)}</strong></td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+        <p class="muted" style="margin:0.5rem 0 0;font-size:0.8rem">Completá los importes de facturación de servicios y mini mercado (carga manual) y guardá.</p>
+        <button type="submit" style="margin-top:0.5rem">Guardar facturación</button>
+      </form>
       
       <div class="seccion-papel" style="margin-top:1rem">
         <h2>Observaciones</h2>
@@ -2118,6 +2198,7 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
       </div>
       ` : ''}
     </div>`,
+    { notice: aviso(c, 'Resumen diario guardado.') },
   );
 });
 
@@ -2151,6 +2232,74 @@ operativaRoutes.post('/operativa/resumen-diario/observaciones', requireRole('adm
       storeId: access.storeId,
       reportDate: fecha,
       observaciones,
+    });
+  }
+  return c.redirect(`/operativa/resumen-diario?fecha=${dateInput(fecha)}&aviso=1`);
+});
+
+operativaRoutes.post('/operativa/resumen-diario/facturacion', requireRole('admin'), async (c) => {
+  const db = dbOf(c);
+  const body = await c.req.parseBody();
+  const access = await resolveStore(c, db, body.tienda);
+  if ('error' in access) return denied(c, access.error);
+  const fecha = dayStart(str(body.fecha));
+  if (!fecha) {
+    return fail(c, 'Resumen diario', 'Fecha inválida', '/operativa/resumen-diario');
+  }
+  const campos = [
+    'servicios_morning',
+    'mini_morning',
+    'servicios_evening',
+    'mini_evening',
+    'servicios_night',
+    'mini_night',
+    'servicios_adicional',
+    'mini_adicional',
+  ];
+  const importes: Record<string, number> = {};
+  for (const campo of campos) {
+    const valor = centsOr0(body[campo]);
+    if (valor === null) {
+      return fail(
+        c,
+        'Resumen diario',
+        'Los importes de facturación deben ser números válidos en pesos.',
+        '/operativa/resumen-diario',
+      );
+    }
+    importes[campo] = valor;
+  }
+  const updates = {
+    mananaFacturacionServicios: importes.servicios_morning,
+    mananaFacturacionMiniMercado: importes.mini_morning,
+    tardeFacturacionServicios: importes.servicios_evening,
+    tardeFacturacionMiniMercado: importes.mini_evening,
+    nocheFacturacionServicios: importes.servicios_night,
+    nocheFacturacionMiniMercado: importes.mini_night,
+    adicionalFacturacionServicios: importes.servicios_adicional,
+    adicionalFacturacionMiniMercado: importes.mini_adicional,
+    updatedAt: new Date(),
+  };
+  const existing = await db
+    .select({ id: dailyActivitySummary.id })
+    .from(dailyActivitySummary)
+    .where(
+      and(
+        eq(dailyActivitySummary.storeId, access.storeId),
+        eq(dailyActivitySummary.reportDate, fecha),
+      ),
+    )
+    .limit(1);
+  if (existing[0]) {
+    await db
+      .update(dailyActivitySummary)
+      .set(updates)
+      .where(eq(dailyActivitySummary.id, existing[0].id));
+  } else {
+    await db.insert(dailyActivitySummary).values({
+      storeId: access.storeId,
+      reportDate: fecha,
+      ...updates,
     });
   }
   return c.redirect(`/operativa/resumen-diario?fecha=${dateInput(fecha)}&aviso=1`);
@@ -2737,6 +2886,7 @@ operativaRoutes.get('/operativa/rendicion', async (c) => {
         <td style="${TD}">${formatArs(r.openingCents)}</td>
         <td style="${TD}">${formatArs(r.closingCents)}</td>
         <td style="${TD}">${formatArs(r.totalSalesCents)}</td>
+        <td style="${TD}">${formatArs(r.totalEnsobradoCents)}</td>
         <td style="${TD}"><a href="/operativa/rendicion/${r.id}">Ver detalle</a></td>
       </tr>`,
     )
@@ -2761,9 +2911,10 @@ operativaRoutes.get('/operativa/rendicion', async (c) => {
           <th style="${TH}">Apertura</th>
           <th style="${TH}">Cierre</th>
           <th style="${TH}">Ventas</th>
+          <th style="${TH}">Ensobrado</th>
           <th style="${TH}">Detalle</th>
         </tr></thead>
-        <tbody>${bodyRows || `<tr><td colspan="8" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
+        <tbody>${bodyRows || `<tr><td colspan="9" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
       </table>
     </div>`,
     { notice: aviso(c, 'Rendición guardada.') },

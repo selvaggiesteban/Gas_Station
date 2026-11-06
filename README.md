@@ -16,9 +16,9 @@ Su código fuente original (Laravel 11, clon de Academicus) está preservado en 
 | Email | Gmail API (OAuth2) — pendiente F1 |
 | CI/CD | Workers Builds (GitHub → deploy automático) |
 
-Recursos en la cuenta Cloudflare `793d012a405417ee4382f1ef1869753e`:
+Recursos en la cuenta Cloudflare `69f95d8457f001712efcf4d21c0e63a0`:
 
-- Worker: `gas-station` → <https://gas-station.selvaggi-esteban.workers.dev>
+- Worker: `app` → <https://app.lescognc.workers.dev>
 - D1: `gas-station-db` (ENAM)
 - R2: `gas-station-assets`
 

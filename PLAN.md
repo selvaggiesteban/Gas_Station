@@ -78,9 +78,9 @@ Resumen de las 20 tablas:
 
 ## 9. Recursos Cloudflare
 
-- **Account id**: `793d012a405417ee4382f1ef1869753e`.
-- **D1** `gas-station-db` (id `77eb09cf-d0c0-495b-af8a-c7e0107398ea`); **R2** `gas-station-assets`.
-- **Worker** `gas-station`, URL: https://gas-station.selvaggi-esteban.workers.dev.
+- **Account id**: `69f95d8457f001712efcf4d21c0e63a0` (cuenta del cliente).
+- **D1** `gas-station-db` (id `d550427d-530a-40bb-8996-abc95655c0f2`); **R2** `gas-station-assets`.
+- **Worker** `app`, URL: https://app.lescognc.workers.dev.
 - **Repo**: github.com/selvaggiesteban/Gas_Station (rama `main` = código nuevo; `legacy/laravel` = baseline Laravel).
 
 

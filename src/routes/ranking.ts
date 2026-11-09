@@ -58,12 +58,16 @@ function filtersHtml(rol: RolFilter): string {
   return `<p class="row" style="margin:0 0 0.75rem">${pills}</p>`;
 }
 
-const PANEL_NAV = `<nav class="bottom" style="margin-bottom:1rem">
+function panelNav(role: string): string {
+  const tienda =
+    role === 'store_manager' ? '' : '<a href="/tienda">Tienda</a>';
+  return `<nav class="bottom" style="margin-bottom:1rem">
   <a href="/app">Inicio</a>
   <a href="/ranking">Ranking</a>
-  <a href="/tienda">Tienda</a>
+  ${tienda}
   <a href="/perfil">Tu perfil</a>
 </nav>`;
+}
 
 function rankRow(opts: {
   position: number;
@@ -161,7 +165,7 @@ rankingRoutes.get('/ranking', requireAuth(), async (c) => {
   return c.html(
     page(
       { title: 'Ranking', brand: brandOf(c), user: me },
-      `${PANEL_NAV}
+      `${panelNav(me.role)}
       <div class="card">
         <h1>Ranking</h1>
         <p class="muted">El ranking se ordena por puntos acumulados. Sumá puntos con desafíos, sesiones y compras.</p>

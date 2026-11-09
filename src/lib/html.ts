@@ -325,7 +325,6 @@ function sidebarLinks(user: { name: string; points: number; role: string }): str
     : isGestor
       ? [
           { href: '/app', label: 'Inicio' },
-          { href: '/tienda', label: 'Mi tienda' },
           { href: '/operativa', label: 'Operativa' },
           { href: '/operativa/caja/movimientos', label: 'Movimientos' },
           { href: '/admin/ordenes', label: 'Órdenes' },

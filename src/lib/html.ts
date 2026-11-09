@@ -298,9 +298,6 @@ function headerNav(opts: PageOptions): string {
   }
   if (opts.landing) {
     return `<nav class="row">
-        <a href="#incluye">Qué incluye</a>
-        <a href="#precios">Precios</a>
-        <a href="#contacto">Contacto</a>
         <a href="/login">Accedé</a>
         <a class="btn" href="/registro">Creá tu cuenta</a>
       </nav>`;

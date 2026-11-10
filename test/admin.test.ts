@@ -91,25 +91,34 @@ describe('admin panel', () => {
     expect(await comoAdmin.text()).toContain('Buscá');
   });
 
-  it('permite cambiar el rol de un usuario a store_manager', async () => {
-    const { cookie } = await registerAs('Admin Roles', uniqueEmail('admin-rol'), 'admin');
-    const targetEmail = uniqueEmail('target-rol');
+  it('permite editar nombre, email y rol de un usuario', async () => {
+    const { cookie } = await registerAs('Admin Edita', uniqueEmail('admin-editar'), 'admin');
+    const targetEmail = uniqueEmail('target-editar');
     await register('User Target', targetEmail);
     const target = await env.DB.prepare('select id from users where email = ?')
       .bind(targetEmail)
       .first<{ id: number }>();
 
+    const pagina = await get(`/admin/usuarios/${target!.id}/editar`, cookie);
+    expect(pagina.status).toBe(200);
+    expect(await pagina.text()).toContain('Editar usuario');
+
+    const nuevoEmail = uniqueEmail('target-editado');
     const res = await post(
-      `/admin/usuarios/${target!.id}/rol`,
-      { role: 'store_manager' },
+      `/admin/usuarios/${target!.id}/editar`,
+      { name: 'User Editado', email: nuevoEmail, role: 'store_manager' },
       cookie,
     );
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('/admin/usuarios?aviso=ok');
 
-    const after = await env.DB.prepare('select role from users where id = ?')
+    const after = await env.DB.prepare(
+      'select name, email, role from users where id = ?',
+    )
       .bind(target!.id)
-      .first<{ role: string }>();
+      .first<{ name: string; email: string; role: string }>();
+    expect(after?.name).toBe('User Editado');
+    expect(after?.email).toBe(nuevoEmail);
     expect(after?.role).toBe('store_manager');
   });
 
@@ -208,19 +217,68 @@ describe('admin panel', () => {
     expect(row!.active).toBe(1);
   });
 
-  it('impide que un admin se desactive a sí mismo', async () => {
+  it('impide que un admin se elimine a sí mismo', async () => {
     const { cookie, id } = await registerAs('Admin Auto', uniqueEmail('admin-auto'), 'admin');
     const res = await post(
-      `/admin/usuarios/${id}/activo`,
-      { active: '0' },
+      `/admin/usuarios/${id}/eliminar`,
+      {},
       cookie,
     );
     expect(res.status).toBe(422);
-    expect(await res.text()).toContain('No podés desactivarte');
+    expect(await res.text()).toContain('No podés eliminarte');
 
-    const after = await env.DB.prepare('select active from users where id = ?')
+    const after = await env.DB.prepare('select id from users where id = ?')
       .bind(id)
-      .first<{ active: number }>();
-    expect(after?.active).toBe(1);
+      .first<{ id: number }>();
+    expect(after).toBeTruthy();
+  });
+
+  it('elimina un usuario que no tiene historial', async () => {
+    const { cookie } = await registerAs('Admin Borra', uniqueEmail('admin-borra'), 'admin');
+    const targetEmail = uniqueEmail('target-borrar');
+    await register('Borrable', targetEmail);
+    const target = await env.DB.prepare('select id from users where email = ?')
+      .bind(targetEmail)
+      .first<{ id: number }>();
+
+    const res = await post(
+      `/admin/usuarios/${target!.id}/eliminar`,
+      {},
+      cookie,
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/admin/usuarios?aviso=eliminado');
+
+    const after = await env.DB.prepare('select id from users where id = ?')
+      .bind(target!.id)
+      .first<{ id: number }>();
+    expect(after).toBeNull();
+  });
+
+  it('no elimina un usuario con historial de negocio', async () => {
+    const { cookie } = await registerAs('Admin Historial', uniqueEmail('admin-hist'), 'admin');
+    const targetEmail = uniqueEmail('target-hist');
+    await register('Con Historial', targetEmail);
+    const target = await env.DB.prepare('select id from users where email = ?')
+      .bind(targetEmail)
+      .first<{ id: number }>();
+    await env.DB.prepare(
+      "insert into point_logs (user_id, points, reason, created_at) values (?, 10, 'admin_adjust', ?)",
+    )
+      .bind(target!.id, Date.now())
+      .run();
+
+    const res = await post(
+      `/admin/usuarios/${target!.id}/eliminar`,
+      {},
+      cookie,
+    );
+    expect(res.status).toBe(422);
+    expect(await res.text()).toContain('No se pudo eliminar');
+
+    const after = await env.DB.prepare('select id from users where id = ?')
+      .bind(target!.id)
+      .first<{ id: number }>();
+    expect(after).toBeTruthy();
   });
 });

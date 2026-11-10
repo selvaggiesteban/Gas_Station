@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { and, count, desc, eq, like, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, like, ne, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { AppEnv } from '../env';
@@ -11,9 +11,12 @@ import {
   GOAL_TYPE_VALUES,
   ORDER_STATUS_VALUES,
   ROLE_VALUES,
+  announcements,
+  cashDays,
   orderItems,
   orders,
-  sessions,
+  passwordResetTokens,
+  pointLogs,
   storeUser,
   stores,
   users,
@@ -30,6 +33,13 @@ const ROLE_LABELS: Record<Role, string> = {
   store_manager: 'Gestor de tienda',
   customer: 'Cliente',
 };
+
+function roleOptions(selected: Role): string {
+  return ROLE_VALUES.map(
+    (r) =>
+      `<option value="${r}"${r === selected ? ' selected' : ''}>${ROLE_LABELS[r]}</option>`,
+  ).join('');
+}
 
 const GOAL_LABELS: Record<GoalType, string> = {
   points: 'Puntos',
@@ -122,7 +132,9 @@ function avisado(path: string): string {
 }
 
 function avisoDe(c: Context<AppEnv>): string | undefined {
-  return c.req.query('aviso') ? 'Cambios guardados.' : undefined;
+  const aviso = c.req.query('aviso');
+  if (!aviso) return undefined;
+  return aviso === 'eliminado' ? 'Usuario eliminado.' : 'Cambios guardados.';
 }
 
 function notFoundBody(volver: string): string {
@@ -206,29 +218,18 @@ adminRoutes.get('/admin/usuarios', async (c) => {
     .orderBy(users.name)
     .limit(50);
 
-  const roleOptions = (selected: Role): string =>
-    ROLE_VALUES.map(
-      (r) =>
-        `<option value="${r}"${r === selected ? ' selected' : ''}>${ROLE_LABELS[r]}</option>`,
-    ).join('');
-
   const bodyRows = rows
     .map(
       (u) => `<tr>
       <td style="${TD}">${escapeHtml(u.name)}</td>
       <td style="${TD}">${escapeHtml(u.email)}</td>
-      <td style="${TD}">
-        <form method="post" action="/admin/usuarios/${u.id}/rol" style="display:flex;gap:0.4rem;align-items:center">
-          <select name="role" style="width:auto">${roleOptions(u.role)}</select>
-          <button type="submit" style="${SMALL_BTN}">Guardá</button>
-        </form>
-      </td>
+      <td style="${TD}">${ROLE_LABELS[u.role]}</td>
       <td style="${TD}">${u.active ? 'Sí' : 'No'}</td>
       <td style="${TD}">${u.points}</td>
       <td style="${TD}">
-        <form method="post" action="/admin/usuarios/${u.id}/activo" style="display:inline">
-          <input type="hidden" name="active" value="${u.active ? '0' : '1'}">
-          <button type="submit" class="secondary" style="${SMALL_BTN}">${u.active ? 'Desactivá' : 'Activá'}</button>
+        <a class="btn secondary" href="/admin/usuarios/${u.id}/editar" style="${SMALL_BTN}">Editar</a>
+        <form method="post" action="/admin/usuarios/${u.id}/eliminar" style="display:inline" onsubmit="return confirm('¿Eliminar este usuario? No se puede deshacer.')">
+          <button type="submit" class="secondary" style="${SMALL_BTN}">Eliminar</button>
         </form>
       </td>
     </tr>`,
@@ -266,85 +267,234 @@ adminRoutes.get('/admin/usuarios', async (c) => {
   );
 });
 
-adminRoutes.post('/admin/usuarios/:id/rol', async (c) => {
+adminRoutes.get('/admin/usuarios/:id/editar', async (c) => {
   const id = parseIdParam(c.req.param('id'));
   if (!id) {
     return render(c, 'Usuarios', notFoundBody('/admin/usuarios'), {
       status: 404,
     });
   }
-  const body = await c.req.parseBody();
-  const role = str(body.role);
-  if (!isRole(role)) {
+  const db = dbOf(c);
+  const rows = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, id))
+    .limit(1);
+  const u = rows[0];
+  if (!u) {
     return render(c, 'Usuarios', notFoundBody('/admin/usuarios'), {
-      error: 'Elegí un rol válido.',
+      status: 404,
     });
   }
+  return c.html(
+    page(
+      { title: 'Editar usuario', brand: brandOf(c), user: c.get('user') },
+      `<div class="card">
+        <h1>Editar usuario</h1>
+        <form method="post" action="/admin/usuarios/${u.id}/editar">
+          <label for="user-name">Nombre</label>
+          <input id="user-name" name="name" type="text" required minlength="2" value="${escapeHtml(u.name)}">
+          <label for="user-email">Email</label>
+          <input id="user-email" name="email" type="email" required value="${escapeHtml(u.email)}">
+          <label for="user-role">Rol</label>
+          <select id="user-role" name="role">${roleOptions(u.role)}</select>
+          <button type="submit">Guardá</button>
+          <a class="btn secondary" href="/admin/usuarios">Volver a usuarios</a>
+        </form>
+      </div>`,
+    ),
+  );
+});
+
+adminRoutes.post('/admin/usuarios/:id/editar', async (c) => {
+  const id = parseIdParam(c.req.param('id'));
+  if (!id) {
+    return render(c, 'Usuarios', notFoundBody('/admin/usuarios'), {
+      status: 404,
+    });
+  }
+  const volver = `<a class="btn secondary" href="/admin/usuarios">Volver a usuarios</a>`;
+  const body = await c.req.parseBody();
+  const name = str(body.name);
+  const email = str(body.email);
+  const role = str(body.role);
+  if (name.length < 2) {
+    return render(
+      c,
+      'Usuarios',
+      `<div class="card"><h1>No se guardó</h1>
+       <p class="muted">Ingresá un nombre de al menos 2 caracteres.</p>${volver}</div>`,
+      { error: 'Ingresá un nombre de al menos 2 caracteres.' },
+    );
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return render(
+      c,
+      'Usuarios',
+      `<div class="card"><h1>No se guardó</h1>
+       <p class="muted">Ingresá un email válido.</p>${volver}</div>`,
+      { error: 'Ingresá un email válido.' },
+    );
+  }
+  if (!isRole(role)) {
+    return render(
+      c,
+      'Usuarios',
+      `<div class="card"><h1>No se guardó</h1>
+       <p class="muted">Elegí un rol válido.</p>${volver}</div>`,
+      { error: 'Elegí un rol válido.' },
+    );
+  }
+  const db = dbOf(c);
+  const rows = await db
+    .select({ id: users.id, role: users.role, email: users.email })
+    .from(users)
+    .where(eq(users.id, id))
+    .limit(1);
+  if (!rows[0]) {
+    return render(c, 'Usuarios', notFoundBody('/admin/usuarios'), {
+      status: 404,
+    });
+  }
+  const duplicado = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1);
+  if (duplicado[0] && duplicado[0].id !== id) {
+    return render(
+      c,
+      'Usuarios',
+      `<div class="card"><h1>No se guardó</h1>
+       <p class="muted">Ese email ya está en uso por otro usuario.</p>${volver}</div>`,
+      { error: 'Ese email ya está en uso por otro usuario.' },
+    );
+  }
+  const me = c.get('user')!;
+  if (me.id === id && role !== rows[0].role) {
+    return render(
+      c,
+      'Usuarios',
+      `<div class="card"><h1>No se guardó</h1>
+       <p class="muted">No podés cambiarte el rol a vos mismo.</p>${volver}</div>`,
+      { error: 'No podés cambiarte el rol a vos mismo.' },
+    );
+  }
+  await db
+    .update(users)
+    .set({ name, email, role, updatedAt: new Date() })
+    .where(eq(users.id, id));
+  if (email !== rows[0].email) {
+    await db
+      .delete(passwordResetTokens)
+      .where(eq(passwordResetTokens.email, rows[0].email));
+  }
+  return c.redirect(avisado('/admin/usuarios'));
+});
+
+adminRoutes.post('/admin/usuarios/:id/eliminar', async (c) => {
+  const id = parseIdParam(c.req.param('id'));
+  if (!id) {
+    return render(c, 'Usuarios', notFoundBody('/admin/usuarios'), {
+      status: 404,
+    });
+  }
+  const volver = `<a class="btn secondary" href="/admin/usuarios">Volver a usuarios</a>`;
   const me = c.get('user')!;
   if (me.id === id) {
     return render(
       c,
       'Usuarios',
-      `<div class="card"><h1>No cambiaste el rol</h1>
-       <p class="muted">No podés cambiarte el rol a vos mismo.</p>
-       <a class="btn secondary" href="/admin/usuarios">Volver a usuarios</a></div>`,
-      { error: 'No podés cambiarte el rol a vos mismo.' },
+      `<div class="card"><h1>No se pudo eliminar</h1>
+       <p class="muted">No podés eliminarte a vos mismo.</p>${volver}</div>`,
+      { error: 'No podés eliminarte a vos mismo.' },
     );
   }
   const db = dbOf(c);
-  const updated = await db
-    .update(users)
-    .set({ role, updatedAt: new Date() })
+  const rows = await db
+    .select({ id: users.id, name: users.name, email: users.email, role: users.role })
+    .from(users)
     .where(eq(users.id, id))
-    .returning({ id: users.id });
-  if (!updated[0]) {
+    .limit(1);
+  const target = rows[0];
+  if (!target) {
     return render(c, 'Usuarios', notFoundBody('/admin/usuarios'), {
       status: 404,
     });
   }
-  return c.redirect(avisado('/admin/usuarios'));
-});
-
-adminRoutes.post('/admin/usuarios/:id/activo', async (c) => {
-  const id = parseIdParam(c.req.param('id'));
-  if (!id) {
-    return render(c, 'Usuarios', notFoundBody('/admin/usuarios'), {
-      status: 404,
-    });
+  if (target.role === 'admin') {
+    const otros = await db
+      .select({ n: count() })
+      .from(users)
+      .where(
+        and(
+          eq(users.role, 'admin'),
+          eq(users.active, true),
+          ne(users.id, id),
+        ),
+      )
+      .limit(1);
+    if ((otros[0]?.n ?? 0) === 0) {
+      return render(
+        c,
+        'Usuarios',
+        `<div class="card"><h1>No se pudo eliminar</h1>
+         <p class="muted">No se puede eliminar al único administrador activo.</p>${volver}</div>`,
+        { error: 'No se puede eliminar al único administrador activo.' },
+      );
+    }
   }
-  const body = await c.req.parseBody();
-  const active = parseActivo(body.active);
-  if (active === null) {
-    return render(c, 'Usuarios', notFoundBody('/admin/usuarios'), {
-      error: "Enviá active = '1' para activar o '0' para desactivar.",
-    });
-  }
-  const me = c.get('user')!;
-  if (me.id === id && !active) {
+  // Historial de negocio: si existe, no se borra para no perder datos.
+  const compras = await db
+    .select({ n: count() })
+    .from(orders)
+    .where(or(eq(orders.userId, id), eq(orders.gestorId, id)))
+    .limit(1);
+  const puntos = await db
+    .select({ n: count() })
+    .from(pointLogs)
+    .where(and(eq(pointLogs.userId, id), ne(pointLogs.reason, 'login')))
+    .limit(1);
+  const caja = await db
+    .select({ n: count() })
+    .from(cashDays)
+    .where(or(eq(cashDays.openedBy, id), eq(cashDays.closedBy, id)))
+    .limit(1);
+  const novedades = await db
+    .select({ n: count() })
+    .from(announcements)
+    .where(eq(announcements.authorId, id))
+    .limit(1);
+  const motivos: string[] = [];
+  if ((compras[0]?.n ?? 0) > 0) motivos.push('tiene órdenes a su nombre');
+  if ((puntos[0]?.n ?? 0) > 0) motivos.push('sumó puntos por compras o desafíos');
+  if ((caja[0]?.n ?? 0) > 0) motivos.push('movió caja');
+  if ((novedades[0]?.n ?? 0) > 0) motivos.push('publicó novedades');
+  if (motivos.length > 0) {
     return render(
       c,
       'Usuarios',
-      `<div class="card"><h1>No se desactivó la cuenta</h1>
-       <p class="muted">No podés desactivarte a vos mismo.</p>
-       <a class="btn secondary" href="/admin/usuarios">Volver a usuarios</a></div>`,
-      { error: 'No podés desactivarte a vos mismo.' },
+      `<div class="card"><h1>No se pudo eliminar</h1>
+       <p class="muted">No se puede eliminar a ${escapeHtml(target.name)} porque ${motivos.join(', ')}. Los usuarios con historial se conservan para no perder datos de la operación.</p>${volver}</div>`,
+      { error: 'No se puede eliminar un usuario con historial.' },
     );
   }
-  const db = dbOf(c);
-  const updated = await db
-    .update(users)
-    .set({ active, updatedAt: new Date() })
-    .where(eq(users.id, id))
-    .returning({ id: users.id });
-  if (!updated[0]) {
-    return render(c, 'Usuarios', notFoundBody('/admin/usuarios'), {
-      status: 404,
-    });
+  try {
+    await db
+      .delete(passwordResetTokens)
+      .where(eq(passwordResetTokens.email, target.email));
+    await db.delete(users).where(eq(users.id, id));
+  } catch (err) {
+    console.error('no se pudo eliminar el usuario', err);
+    return render(
+      c,
+      'Usuarios',
+      `<div class="card"><h1>No se pudo eliminar</h1>
+       <p class="muted">Ocurrió un error inesperado. Probá de nuevo.</p>${volver}</div>`,
+      { error: 'No se pudo eliminar el usuario.' },
+    );
   }
-  if (!active) {
-    await db.delete(sessions).where(eq(sessions.userId, id));
-  }
-  return c.redirect(avisado('/admin/usuarios'));
+  return c.redirect('/admin/usuarios?aviso=eliminado');
 });
 
 // --------------------------------------------------------------- tienda única

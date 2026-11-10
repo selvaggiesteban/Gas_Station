@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { and, count, desc, eq, like, ne, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, like, ne, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { AppEnv } from '../env';
@@ -17,12 +17,19 @@ import {
   orders,
   passwordResetTokens,
   pointLogs,
+  products,
   storeUser,
   stores,
   users,
   weeklyChallenges,
 } from '../db/schema';
-import { approveOrder, mimeFromKey, rejectOrder, ensureDefaultStore } from '../services/orders';
+import {
+  approveOrder,
+  mimeFromKey,
+  rejectOrder,
+  ensureDefaultStore,
+  sanitizeFilename,
+} from '../services/orders';
 
 type Role = (typeof ROLE_VALUES)[number];
 type GoalType = (typeof GOAL_TYPE_VALUES)[number];
@@ -84,6 +91,47 @@ function parseActivo(v: unknown): boolean | null {
   if (s === '1') return true;
   if (s === '0') return false;
   return null;
+}
+
+const MAX_PRODUCT_IMAGE_BYTES = 5 * 1024 * 1024;
+
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+}
+
+async function uniqueSlug(db: Db, base: string, excludeId?: number): Promise<string> {
+  const root = slugify(base) || 'producto';
+  let candidate = root;
+  for (let n = 2; n < 200; n += 1) {
+    const rows = await db
+      .select({ id: products.id })
+      .from(products)
+      .where(eq(products.slug, candidate))
+      .limit(1);
+    if (!rows[0] || rows[0].id === excludeId) return candidate;
+    candidate = `${root}-${n}`;
+  }
+  return `${root}-${Date.now()}`;
+}
+
+function parsePriceCents(v: unknown): number | null {
+  const s = str(v).replace(/\s/g, '').replace(/\./g, '').replace(',', '.');
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return null;
+  const cents = Math.round(Number(s) * 100);
+  return Number.isFinite(cents) && cents >= 0 ? cents : null;
+}
+
+function parseStock(v: unknown): number | null {
+  const s = str(v);
+  if (s === '') return null;
+  const n = Number(s);
+  return Number.isInteger(n) && n >= 0 ? n : null;
 }
 
 function toLocalInput(d: Date): string {
@@ -187,7 +235,7 @@ adminRoutes.get('/admin', async (c) => {
         <h2>Secciones</h2>
         <ul>
           <li><a href="/admin/usuarios">Usuarios y roles</a></li>
-          <li><a href="/admin/tiendas">Tiendas y gestores</a></li>
+          <li><a href="/admin/tienda">Tienda y gestores</a></li>
           <li><a href="/admin/desafios">Desafíos semanales</a></li>
           <li><a href="/admin/ordenes">Órdenes y comprobantes</a></li>
         </ul>
@@ -509,7 +557,7 @@ async function singleStore(db: Db) {
   return rows[0]!;
 }
 
-adminRoutes.get('/admin/tiendas', async (c) => {
+adminRoutes.get('/admin/tienda', async (c) => {
   const db = dbOf(c);
   const store = await singleStore(db);
 
@@ -545,9 +593,34 @@ adminRoutes.get('/admin/tiendas', async (c) => {
       <td style="${TD}">${escapeHtml(g.name)}</td>
       <td style="${TD}">${escapeHtml(g.email)}</td>
       <td style="${TD}">
-        <form method="post" action="/admin/tiendas/gestores/quitar" style="display:inline">
+        <form method="post" action="/admin/tienda/gestores/quitar" style="display:inline">
           <input type="hidden" name="userId" value="${g.userId}">
           <button type="submit" class="secondary" style="${SMALL_BTN}">Quitá gestor</button>
+        </form>
+      </td>
+    </tr>`,
+    )
+    .join('');
+
+  const productos = await db
+    .select()
+    .from(products)
+    .orderBy(asc(products.sort), asc(products.name))
+    .limit(200);
+
+  const filasProductos = productos
+    .map(
+      (p) => `<tr>
+      <td style="${TD}">${escapeHtml(p.name)}</td>
+      <td style="${TD}">${escapeHtml(p.category)}</td>
+      <td style="${TD}">${formatArs(p.priceCents)}</td>
+      <td style="${TD}">${p.stock === null ? '—' : p.stock}</td>
+      <td style="${TD}">${p.active ? 'Sí' : 'No'}</td>
+      <td style="${TD}">
+        <a class="btn secondary" href="/admin/tienda/productos/${p.id}/editar" style="${SMALL_BTN}">Editar</a>
+        <form method="post" action="/admin/tienda/productos/${p.id}/activo" style="display:inline">
+          <input type="hidden" name="active" value="${p.active ? '0' : '1'}">
+          <button type="submit" class="secondary" style="${SMALL_BTN}">${p.active ? 'Desactivá' : 'Activá'}</button>
         </form>
       </td>
     </tr>`,
@@ -564,18 +637,16 @@ adminRoutes.get('/admin/tiendas', async (c) => {
       },
       `<div class="card">
         <h1>Tienda</h1>
-        <p class="muted">La estación opera con una única tienda. Editá su nombre y zona acá abajo.</p>
-        <form method="post" action="/admin/tiendas/editar">
+        <p class="muted">La estación opera con una única tienda. Editá su nombre acá abajo.</p>
+        <form method="post" action="/admin/tienda/editar">
           <label for="store-name">Nombre</label>
           <input id="store-name" name="name" type="text" required value="${escapeHtml(store.name)}">
-          <label for="store-zone">Zona (opcional)</label>
-          <input id="store-zone" name="zone" type="text" value="${escapeHtml(store.zone ?? '')}">
           <button type="submit">Guardá</button>
         </form>
       </div>
       <div class="card">
         <h2>Gestores asignados</h2>
-        <table class="papel"">
+        <table class="papel">
           <thead><tr>
             <th style="${TH}">Nombre</th>
             <th style="${TH}">Email</th>
@@ -586,24 +657,39 @@ adminRoutes.get('/admin/tiendas', async (c) => {
         <h2 style="margin-top:1rem">Asigná gestor</h2>
         ${
           disponibles.length
-            ? `<form method="post" action="/admin/tiendas/gestores">
+            ? `<form method="post" action="/admin/tienda/gestores">
           <label for="userId">Usuario con rol gestor de tienda</label>
           <select id="userId" name="userId" required>${opcionesGestor}</select>
           <button type="submit">Asigná gestor</button>
         </form>`
             : `<p class="muted">No hay usuarios con rol gestor de tienda disponibles. Creá o reasigná usuarios desde <a href="/admin/usuarios">Usuarios</a>.</p>`
         }
+      </div>
+      <div class="card">
+        <h2>Productos</h2>
+        <p class="muted">Cargá los productos que se venden en la tienda online.</p>
+        <p><a class="btn" href="/admin/tienda/productos/nuevo">Nuevo producto</a></p>
+        <table class="papel">
+          <thead><tr>
+            <th style="${TH}">Nombre</th>
+            <th style="${TH}">Categoría</th>
+            <th style="${TH}">Precio</th>
+            <th style="${TH}">Stock</th>
+            <th style="${TH}">Activo</th>
+            <th style="${TH}">Acciones</th>
+          </tr></thead>
+          <tbody>${filasProductos || `<tr><td colspan="6" style="${TD}" class="muted">Todavía no hay productos. Creá el primero con «Nuevo producto».</td></tr>`}</tbody>
+        </table>
       </div>`,
     ),
   );
 });
 
-adminRoutes.post('/admin/tiendas/editar', async (c) => {
+adminRoutes.post('/admin/tienda/editar', async (c) => {
   const body = await c.req.parseBody();
   const name = str(body.name);
-  const zone = str(body.zone) || null;
   if (!name) {
-    return render(c, 'Tienda', notFoundBody('/admin/tiendas'), {
+    return render(c, 'Tienda', notFoundBody('/admin/tienda'), {
       error: 'Ingresá el nombre de la tienda.',
     });
   }
@@ -611,13 +697,13 @@ adminRoutes.post('/admin/tiendas/editar', async (c) => {
   const store = await singleStore(db);
   await db
     .update(stores)
-    .set({ name, zone, updatedAt: new Date() })
+    .set({ name, updatedAt: new Date() })
     .where(eq(stores.id, store.id));
-  return c.redirect(avisado('/admin/tiendas'));
+  return c.redirect(avisado('/admin/tienda'));
 });
 
-adminRoutes.post('/admin/tiendas/gestores', async (c) => {
-  const volver = '/admin/tiendas';
+adminRoutes.post('/admin/tienda/gestores', async (c) => {
+  const volver = '/admin/tienda';
   const body = await c.req.parseBody();
   const userId = Number(str(body.userId));
   if (!Number.isInteger(userId) || userId <= 0) {
@@ -656,11 +742,11 @@ adminRoutes.post('/admin/tiendas/gestores', async (c) => {
   return c.redirect(avisado(volver));
 });
 
-adminRoutes.post('/admin/tiendas/gestores/quitar', async (c) => {
+adminRoutes.post('/admin/tienda/gestores/quitar', async (c) => {
   const body = await c.req.parseBody();
   const userId = Number(str(body.userId));
   if (!Number.isInteger(userId) || userId <= 0) {
-    return render(c, 'Tienda', notFoundBody('/admin/tiendas'), {
+    return render(c, 'Tienda', notFoundBody('/admin/tienda'), {
       error: 'Seleccioná un gestor válido.',
     });
   }
@@ -669,7 +755,279 @@ adminRoutes.post('/admin/tiendas/gestores/quitar', async (c) => {
   await db
     .delete(storeUser)
     .where(and(eq(storeUser.storeId, store.id), eq(storeUser.userId, userId)));
-  return c.redirect(avisado('/admin/tiendas'));
+  return c.redirect(avisado('/admin/tienda'));
+});
+
+// ---------------------------------------------------------------- productos
+
+function productoFormFields(p?: {
+  name: string;
+  category: string;
+  priceCents: number;
+  stock: number | null;
+  description: string;
+}): string {
+  const precio =
+    p === undefined ? '' : (p.priceCents / 100).toFixed(2).replace('.', ',');
+  return `
+    <label for="p-name">Nombre</label>
+    <input id="p-name" name="name" type="text" required minlength="2" value="${escapeHtml(p?.name ?? '')}">
+    <label for="p-category">Categoría</label>
+    <input id="p-category" name="category" type="text" value="${escapeHtml(p?.category ?? '')}" placeholder="Ej: lubricantes, bebidas, general">
+    <label for="p-price">Precio (ARS)</label>
+    <input id="p-price" name="price" type="text" required inputmode="decimal" value="${precio}" placeholder="Ej: 1500,50">
+    <label for="p-stock">Stock (vacío = sin control de stock)</label>
+    <input id="p-stock" name="stock" type="number" min="0" step="1" value="${p?.stock ?? ''}">
+    <label for="p-description">Descripción</label>
+    <textarea id="p-description" name="description" rows="3" placeholder="Detalle breve del producto">${escapeHtml(p?.description ?? '')}</textarea>`;
+}
+
+adminRoutes.get('/admin/tienda/productos/nuevo', (c) => {
+  return c.html(
+    page(
+      { title: 'Nuevo producto', brand: brandOf(c), user: c.get('user') },
+      `<div class="card">
+        <h1>Nuevo producto</h1>
+        <form method="post" action="/admin/tienda/productos/nuevo" enctype="multipart/form-data">
+          ${productoFormFields()}
+          <label for="p-image">Imagen (opcional, JPG/PNG/WEBP hasta 5 MB)</label>
+          <input id="p-image" name="image" type="file" accept="image/*">
+          <button type="submit">Creá producto</button>
+          <a class="btn secondary" href="/admin/tienda">Volver a tienda</a>
+        </form>
+      </div>`,
+    ),
+  );
+});
+
+adminRoutes.post('/admin/tienda/productos/nuevo', async (c) => {
+  const volver = `<a class="btn secondary" href="/admin/tienda">Volver a tienda</a>`;
+  const body = await c.req.parseBody();
+  const name = str(body.name);
+  const category = str(body.category) || 'general';
+  const priceCents = parsePriceCents(body.price);
+  const stock = parseStock(body.stock);
+  const description = str(body.description);
+  if (name.length < 2) {
+    return render(
+      c,
+      'Nuevo producto',
+      `<div class="card"><h1>No se creó</h1>
+       <p class="muted">Ingresá un nombre de al menos 2 caracteres.</p>${volver}</div>`,
+      { error: 'Ingresá un nombre de al menos 2 caracteres.' },
+    );
+  }
+  if (priceCents === null) {
+    return render(
+      c,
+      'Nuevo producto',
+      `<div class="card"><h1>No se creó</h1>
+       <p class="muted">Ingresá un precio válido (ej: 1500 o 1500,50).</p>${volver}</div>`,
+      { error: 'Ingresá un precio válido.' },
+    );
+  }
+  const db = dbOf(c);
+
+  const fileRaw = body.image;
+  let imageFile: File | null = null;
+  if (fileRaw instanceof File && fileRaw.size > 0) {
+    if (!fileRaw.type.startsWith('image/')) {
+      return render(
+        c,
+        'Nuevo producto',
+        `<div class="card"><h1>No se creó</h1>
+         <p class="muted">La imagen tiene que ser un archivo de imagen (JPG, PNG o WEBP).</p>${volver}</div>`,
+        { error: 'La imagen tiene que ser un archivo de imagen.' },
+      );
+    }
+    if (fileRaw.size > MAX_PRODUCT_IMAGE_BYTES) {
+      return render(
+        c,
+        'Nuevo producto',
+        `<div class="card"><h1>No se creó</h1>
+         <p class="muted">La imagen supera los 5 MB. Elegí una más liviana.</p>${volver}</div>`,
+        { error: 'La imagen supera los 5 MB.' },
+      );
+    }
+    imageFile = fileRaw;
+  }
+
+  const slug = await uniqueSlug(db, name);
+  const [inserted] = await db
+    .insert(products)
+    .values({
+      name,
+      slug,
+      category,
+      priceCents,
+      stock,
+      description,
+      sort: 0,
+    })
+    .returning({ id: products.id });
+
+  if (imageFile && inserted) {
+    const ext = (imageFile.name.split('.').pop() ?? '').toLowerCase();
+    const key = `productos/${inserted.id}.${ext && ext.length <= 5 ? ext : 'img'}`;
+    await c.env.R2.put(key, imageFile, {
+      httpMetadata: { contentType: imageFile.type },
+    });
+    await db
+      .update(products)
+      .set({ imageKey: key, updatedAt: new Date() })
+      .where(eq(products.id, inserted.id));
+  }
+  return c.redirect(avisado('/admin/tienda'));
+});
+
+adminRoutes.get('/admin/tienda/productos/:id/editar', async (c) => {
+  const id = parseIdParam(c.req.param('id'));
+  if (!id) {
+    return render(c, 'Tienda', notFoundBody('/admin/tienda'), { status: 404 });
+  }
+  const db = dbOf(c);
+  const rows = await db
+    .select()
+    .from(products)
+    .where(eq(products.id, id))
+    .limit(1);
+  const p = rows[0];
+  if (!p) {
+    return render(c, 'Tienda', notFoundBody('/admin/tienda'), { status: 404 });
+  }
+  const preview = p.imageKey
+    ? `<p class="muted">Imagen actual:</p>
+       <img src="/producto/${p.id}/imagen" alt="${escapeHtml(p.name)}" style="max-width:8rem;max-height:8rem;border:1px solid var(--paper-border);border-radius:4px;display:block;margin-bottom:0.75rem">
+       <p class="muted">Dejá el campo vacío para mantener la imagen actual.</p>`
+    : `<p class="muted">Todavía no tiene imagen.</p>`;
+  return c.html(
+    page(
+      { title: 'Editar producto', brand: brandOf(c), user: c.get('user') },
+      `<div class="card">
+        <h1>Editar producto</h1>
+        <form method="post" action="/admin/tienda/productos/${p.id}/editar" enctype="multipart/form-data">
+          ${productoFormFields(p)}
+          ${preview}
+          <label for="p-image">Nueva imagen (opcional, JPG/PNG/WEBP hasta 5 MB)</label>
+          <input id="p-image" name="image" type="file" accept="image/*">
+          <button type="submit">Guardá</button>
+          <a class="btn secondary" href="/admin/tienda">Volver a tienda</a>
+        </form>
+      </div>`,
+    ),
+  );
+});
+
+adminRoutes.post('/admin/tienda/productos/:id/editar', async (c) => {
+  const id = parseIdParam(c.req.param('id'));
+  if (!id) {
+    return render(c, 'Tienda', notFoundBody('/admin/tienda'), { status: 404 });
+  }
+  const volver = `<a class="btn secondary" href="/admin/tienda">Volver a tienda</a>`;
+  const db = dbOf(c);
+  const rows = await db
+    .select()
+    .from(products)
+    .where(eq(products.id, id))
+    .limit(1);
+  if (!rows[0]) {
+    return render(c, 'Tienda', notFoundBody('/admin/tienda'), { status: 404 });
+  }
+  const body = await c.req.parseBody();
+  const name = str(body.name);
+  const category = str(body.category) || 'general';
+  const priceCents = parsePriceCents(body.price);
+  const stock = parseStock(body.stock);
+  const description = str(body.description);
+  if (name.length < 2) {
+    return render(
+      c,
+      'Editar producto',
+      `<div class="card"><h1>No se guardó</h1>
+       <p class="muted">Ingresá un nombre de al menos 2 caracteres.</p>${volver}</div>`,
+      { error: 'Ingresá un nombre de al menos 2 caracteres.' },
+    );
+  }
+  if (priceCents === null) {
+    return render(
+      c,
+      'Editar producto',
+      `<div class="card"><h1>No se guardó</h1>
+       <p class="muted">Ingresá un precio válido (ej: 1500 o 1500,50).</p>${volver}</div>`,
+      { error: 'Ingresá un precio válido.' },
+    );
+  }
+
+  const fileRaw = body.image;
+  let imageFile: File | null = null;
+  if (fileRaw instanceof File && fileRaw.size > 0) {
+    if (!fileRaw.type.startsWith('image/')) {
+      return render(
+        c,
+        'Editar producto',
+        `<div class="card"><h1>No se guardó</h1>
+         <p class="muted">La imagen tiene que ser un archivo de imagen (JPG, PNG o WEBP).</p>${volver}</div>`,
+        { error: 'La imagen tiene que ser un archivo de imagen.' },
+      );
+    }
+    if (fileRaw.size > MAX_PRODUCT_IMAGE_BYTES) {
+      return render(
+        c,
+        'Editar producto',
+        `<div class="card"><h1>No se guardó</h1>
+         <p class="muted">La imagen supera los 5 MB. Elegí una más liviana.</p>${volver}</div>`,
+        { error: 'La imagen supera los 5 MB.' },
+      );
+    }
+    imageFile = fileRaw;
+  }
+
+  const slug = await uniqueSlug(db, name, id);
+  await db
+    .update(products)
+    .set({ name, slug, category, priceCents, stock, description, updatedAt: new Date() })
+    .where(eq(products.id, id));
+
+  if (imageFile) {
+    const ext = (imageFile.name.split('.').pop() ?? '').toLowerCase();
+    const key = `productos/${id}.${ext && ext.length <= 5 ? ext : 'img'}`;
+    await c.env.R2.put(key, imageFile, {
+      httpMetadata: { contentType: imageFile.type },
+    });
+    const vieja = rows[0].imageKey;
+    await db
+      .update(products)
+      .set({ imageKey: key, updatedAt: new Date() })
+      .where(eq(products.id, id));
+    if (vieja && vieja !== key) {
+      await c.env.R2.delete(vieja);
+    }
+  }
+  return c.redirect(avisado('/admin/tienda'));
+});
+
+adminRoutes.post('/admin/tienda/productos/:id/activo', async (c) => {
+  const id = parseIdParam(c.req.param('id'));
+  if (!id) {
+    return render(c, 'Tienda', notFoundBody('/admin/tienda'), { status: 404 });
+  }
+  const body = await c.req.parseBody();
+  const active = parseActivo(body.active);
+  if (active === null) {
+    return render(c, 'Tienda', notFoundBody('/admin/tienda'), {
+      error: "Enviá active = '1' para activar o '0' para desactivar.",
+    });
+  }
+  const db = dbOf(c);
+  const updated = await db
+    .update(products)
+    .set({ active, updatedAt: new Date() })
+    .where(eq(products.id, id))
+    .returning({ id: products.id });
+  if (!updated[0]) {
+    return render(c, 'Tienda', notFoundBody('/admin/tienda'), { status: 404 });
+  }
+  return c.redirect(avisado('/admin/tienda'));
 });
 
 // ---------------------------------------------------------------- desafíos
@@ -1087,7 +1445,7 @@ adminRoutes.get('/admin/ordenes/:id', async (c) => {
             .where(eq(users.id, order.gestorId))
             .limit(1),
       db
-        .select({ name: stores.name, zone: stores.zone })
+        .select({ name: stores.name })
         .from(stores)
         .where(eq(stores.id, order.storeId))
         .limit(1),

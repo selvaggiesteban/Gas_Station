@@ -99,6 +99,7 @@ shopRoutes.get('/tienda', requireAuth(), async (c) => {
             <button type="submit" style="margin-top:0">Agregá al carrito</button>
           </form>`;
       return `<div class="card">
+        ${p.imageKey ? `<img src="/producto/${p.id}/imagen" alt="${escapeHtml(p.name)}" style="width:100%;max-height:12rem;object-fit:cover;border:1px solid var(--paper-border);border-radius:4px;margin-bottom:0.5rem" loading="lazy">` : ''}
         <h2>${escapeHtml(p.name)}</h2>
         <p class="muted">${escapeHtml(p.description)}</p>
         <div class="row"><strong>${formatArs(p.priceCents)}</strong>${stockHtml}</div>
@@ -500,6 +501,27 @@ shopRoutes.get('/ordenes/:id', requireAuth(), async (c) => {
       </div>`,
     ),
   );
+});
+
+shopRoutes.get('/producto/:id/imagen', async (c) => {
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id) || id <= 0) return c.notFound();
+  const db = dbOf(c);
+  const rows = await db
+    .select({ imageKey: products.imageKey })
+    .from(products)
+    .where(eq(products.id, id))
+    .limit(1);
+  const key = rows[0]?.imageKey;
+  if (!key) return c.notFound();
+  const obj = await c.env.R2.get(key);
+  if (!obj) return c.notFound();
+  return new Response(obj.body, {
+    headers: {
+      'Content-Type': obj.httpMetadata?.contentType ?? 'application/octet-stream',
+      'Cache-Control': 'public, max-age=3600',
+    },
+  });
 });
 
 shopRoutes.get('/ordenes/:id/comprobante', requireAuth(), async (c) => {

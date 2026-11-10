@@ -155,7 +155,6 @@ export const settings = sqliteTable('settings', {
 export const stores = sqliteTable('stores', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull().unique(),
-  zone: text('zone'),
   active: integer('active', { mode: 'boolean' }).notNull().default(true),
   createdAt: createdAt(),
   updatedAt: updatedAt(),

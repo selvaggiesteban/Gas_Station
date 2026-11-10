@@ -125,8 +125,8 @@ describe('admin panel', () => {
   it('edita la tienda única y asigna un gestor', async () => {
     const { cookie } = await registerAs('Admin Tiendas', uniqueEmail('admin-tiendas'), 'admin');
 
-    // La página de tiendas crea la única tienda si no existe todavía.
-    const indice = await get('/admin/tiendas', cookie);
+    // La página de tienda crea la única tienda si no existe todavía.
+    const indice = await get('/admin/tienda', cookie);
     expect(indice.status).toBe(200);
 
     const store = await env.DB.prepare(
@@ -136,20 +136,17 @@ describe('admin panel', () => {
 
     const tienda = `LESCO GNC Única ${Date.now()}-${seq++}`;
     const editada = await post(
-      '/admin/tiendas/editar',
-      { name: tienda, zone: 'Norte' },
+      '/admin/tienda/editar',
+      { name: tienda },
       cookie,
     );
     expect(editada.status).toBe(302);
-    expect(editada.headers.get('location')).toBe('/admin/tiendas?aviso=ok');
+    expect(editada.headers.get('location')).toBe('/admin/tienda?aviso=ok');
 
-    const after = await env.DB.prepare(
-      'select name, zone from stores where id = ?',
-    )
+    const after = await env.DB.prepare('select name from stores where id = ?')
       .bind(store!.id)
-      .first<{ name: string; zone: string | null }>();
+      .first<{ name: string }>();
     expect(after?.name).toBe(tienda);
-    expect(after?.zone).toBe('Norte');
 
     const gestorEmail = uniqueEmail('gestor');
     await register('Gestor Uno', gestorEmail);
@@ -161,12 +158,12 @@ describe('admin panel', () => {
       .first<{ id: number }>();
 
     const asignado = await post(
-      '/admin/tiendas/gestores',
+      '/admin/tienda/gestores',
       { userId: String(gestor!.id) },
       cookie,
     );
     expect(asignado.status).toBe(302);
-    expect(asignado.headers.get('location')).toBe('/admin/tiendas?aviso=ok');
+    expect(asignado.headers.get('location')).toBe('/admin/tienda?aviso=ok');
 
     const link = await env.DB.prepare(
       'select user_id from store_user where store_id = ? and user_id = ?',
@@ -174,6 +171,84 @@ describe('admin panel', () => {
       .bind(store!.id, gestor!.id)
       .first<{ user_id: number }>();
     expect(link?.user_id).toBe(gestor!.id);
+  });
+
+  it('crea, edita y activa/desactiva un producto', async () => {
+    const { cookie } = await registerAs('Admin Prod', uniqueEmail('admin-prod'), 'admin');
+
+    const nuevo = await get('/admin/tienda/productos/nuevo', cookie);
+    expect(nuevo.status).toBe(200);
+    expect(await nuevo.text()).toContain('Nuevo producto');
+
+    const res = await post(
+      '/admin/tienda/productos/nuevo',
+      {
+        name: 'Aceite Motor 20W50',
+        category: 'lubricantes',
+        price: '12.500,75',
+        stock: '8',
+        description: 'Balde de 20 litros',
+      },
+      cookie,
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/admin/tienda?aviso=ok');
+
+    const prod = await env.DB.prepare(
+      'select id, slug, price_cents, stock, category, active from products where name = ?',
+    )
+      .bind('Aceite Motor 20W50')
+      .first<{
+        id: number;
+        slug: string;
+        price_cents: number;
+        stock: number;
+        category: string;
+        active: number;
+      }>();
+    expect(prod).toBeTruthy();
+    expect(prod!.slug).toBe('aceite-motor-20w50');
+    expect(prod!.price_cents).toBe(1250075);
+    expect(prod!.stock).toBe(8);
+    expect(prod!.category).toBe('lubricantes');
+    expect(prod!.active).toBe(1);
+
+    const indice = await get('/admin/tienda', cookie);
+    const htmlIndice = await indice.text();
+    expect(htmlIndice).toContain('Aceite Motor 20W50');
+    expect(htmlIndice).toContain(`/admin/tienda/productos/${prod!.id}/editar`);
+
+    const editado = await post(
+      `/admin/tienda/productos/${prod!.id}/editar`,
+      {
+        name: 'Aceite Motor 20W50',
+        category: 'lubricantes',
+        price: '13000',
+        stock: '',
+        description: 'Sin control de stock',
+      },
+      cookie,
+    );
+    expect(editado.status).toBe(302);
+    const after = await env.DB.prepare(
+      'select price_cents, stock, description from products where id = ?',
+    )
+      .bind(prod!.id)
+      .first<{ price_cents: number; stock: number | null; description: string }>();
+    expect(after?.price_cents).toBe(1300000);
+    expect(after?.stock).toBeNull();
+    expect(after?.description).toBe('Sin control de stock');
+
+    const off = await post(
+      `/admin/tienda/productos/${prod!.id}/activo`,
+      { active: '0' },
+      cookie,
+    );
+    expect(off.status).toBe(302);
+    const desactivado = await env.DB.prepare('select active from products where id = ?')
+      .bind(prod!.id)
+      .first<{ active: number }>();
+    expect(desactivado?.active).toBe(0);
   });
 
   it('crea desafío con meta, ventana y recompensa', async () => {

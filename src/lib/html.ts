@@ -314,7 +314,7 @@ function sidebarLinks(user: { name: string; points: number; role: string }): str
     ? [
         { href: '/app', label: 'Inicio' },
         { href: '/admin/usuarios', label: 'Usuarios' },
-        { href: '/admin/tiendas', label: 'Tiendas' },
+        { href: '/admin/tienda', label: 'Tienda' },
         { href: '/admin/desafios', label: 'Desafíos' },
         { href: '/admin/ordenes', label: 'Órdenes' },
         { href: '/operativa', label: 'Operativa' },

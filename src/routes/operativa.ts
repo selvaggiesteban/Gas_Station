@@ -413,7 +413,7 @@ operativaRoutes.get('/operativa', async (c) => {
 
   const rendicionCard = indexCard(
     'Rendición de turno',
-    'Lecturas de surtidores y puente de medición.',
+    'Lecturas de mangueras y puente de medición.',
     '/operativa/rendicion',
     shift[0]
       ? `${fmtDay(shift[0].reportDate)} · Turno ${SHIFT_LABELS[shift[0].shift]} · Ventas ${formatArs(shift[0].totalSalesCents)}`
@@ -442,7 +442,7 @@ operativaRoutes.get('/operativa', async (c) => {
           ),
           indexCard(
             'Resumen diario de actividades',
-            'Matriz de GNC y revisión de surtidores por turno.',
+            'Matriz de GNC y revisión de mangueras por turno.',
             '/operativa/actividades',
             daily[0]
               ? `${fmtDay(daily[0].reportDate)} · Turno ${SHIFT_LABELS[daily[0].shift]} · GNC ${daily[0].gncVolume} m³`
@@ -1685,7 +1685,7 @@ operativaRoutes.get('/operativa/actividades', async (c) => {
           <th style="${TH}">Cierre GNC</th>
           <th style="${TH}">Volumen</th>
           <th style="${TH}">Ventas GNC</th>
-          <th style="${TH}">Revisión surtidor</th>
+          <th style="${TH}">Revisión manguera</th>
           <th style="${TH}">Notas</th>
         </tr></thead>
         <tbody>${bodyRows || `<tr><td colspan="8" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
@@ -1720,7 +1720,7 @@ operativaRoutes.get('/operativa/actividades/nuevo', async (c) => {
         <label for="gnc_ventas">Ventas de GNC (pesos)</label>
         <input id="gnc_ventas" name="gnc_ventas" type="number" step="0.01" min="0" value="0" required>
         <label style="display:flex;gap:0.5rem;align-items:center;font-weight:400">
-          <input type="checkbox" name="revision" value="on" style="width:auto"> Revisión de surtidores hecha
+          <input type="checkbox" name="revision" value="on" style="width:auto"> Revisión de mangueras hecha
         </label>
         <label for="notas">Notas (opcional)</label>
         <input id="notas" name="notas" type="text">
@@ -2220,7 +2220,7 @@ function parseReadings(
     const label = `En la fila ${i + 1}`;
     const s = Number(sur);
     if (!Number.isInteger(s) || s < 1 || s > 3) {
-      return `${label}: el surtidor debe ser 1, 2 o 3.`;
+      return `${label}: la manguera debe ser 1, 2 o 3.`;
     }
     if (!isFuel(prod)) {
       return `${label}: elegí un producto válido.`;
@@ -2241,7 +2241,7 @@ function parseReadings(
       return `${label}: ingresá el precio por litro (monto válido en pesos).`;
     }
     if (seen.has(s)) {
-      return `${label}: repetís el surtidor ${s}.`;
+      return `${label}: repetís la manguera ${s}.`;
     }
     seen.add(s);
     out.push({
@@ -2252,12 +2252,12 @@ function parseReadings(
       priceCents: price,
     });
   }
-  if (!any) return 'Cargá al menos una lectura de surtidor.';
+  if (!any) return 'Cargá al menos una lectura de manguera.';
   return out;
 }
 
 function readingsFormHtml(): string {
-  const surtidorOpts =
+  const mangueraOpts =
     `<option value="">—</option>` +
     [1, 2, 3].map((n) => `<option value="${n}">${n}</option>`).join('');
   const fuelOpts = `<option value="">—</option>` + fuelOptions();
@@ -2265,8 +2265,8 @@ function readingsFormHtml(): string {
   for (let i = 0; i < READING_ROWS; i++) {
     out += `<div class="row" style="border-top:1px solid #e4e4e7;padding-top:0.5rem;margin-top:0.5rem">
       <div style="flex:1;min-width:6rem">
-        <label for="r${i}_surtidor">Surtidor</label>
-        <select id="r${i}_surtidor" name="r${i}_surtidor">${surtidorOpts}</select>
+        <label for="r${i}_surtidor">Manguera</label>
+        <select id="r${i}_surtidor" name="r${i}_surtidor">${mangueraOpts}</select>
       </div>
       <div style="flex:1;min-width:7rem">
         <label for="r${i}_producto">Producto</label>
@@ -2344,7 +2344,7 @@ operativaRoutes.get('/operativa/rendicion', async (c) => {
     'Rendición de turno',
     `<div class="card">
       <h1>Rendición de turno</h1>
-      <p class="muted">Encabezado del turno, puente de medición y lecturas de cada surtidor.</p>
+      <p class="muted">Encabezado del turno, puente de medición y lecturas de cada manguera.</p>
       ${filterBar('/operativa/rendicion', fecha, storesHtml)}
       <a class="btn" href="/operativa/rendicion/nuevo">Cargá una rendición</a>
       <table class="papel" style="margin-top:0.75rem">
@@ -2403,8 +2403,8 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
           </div>
         </div>
         
-        <h2 style="margin-top:1.25rem">Lecturas de surtidores (GNC)</h2>
-        <p class="muted">Completá una fila por surtidor usado en el turno.</p>
+        <h2 style="margin-top:1.25rem">Lecturas de mangueras (GNC)</h2>
+        <p class="muted">Completá una fila por manguera usada en el turno.</p>
         ${readingsFormHtml()}
         
         <h2 style="margin-top:1.25rem">Ventas del turno</h2>
@@ -2826,7 +2826,7 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
       </div>
       <table class="papel" style="margin-top:0.75rem">
         <thead><tr>
-          <th style="${TH}">Surtidor</th>
+          <th style="${TH}">Manguera</th>
           <th style="${TH}">Producto</th>
           <th style="${TH}">Lect. inicial</th>
           <th style="${TH}">Lect. final</th>

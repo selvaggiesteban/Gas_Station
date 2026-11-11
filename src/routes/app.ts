@@ -368,7 +368,7 @@ async function loadAnnouncementsHtml(
       (a) => `<div style="border-top:1px solid #e4e4e7;padding:0.6rem 0">
         <strong>${escapeHtml(a.title)}</strong>
         ${a.body ? `<p class="muted" style="margin:0.25rem 0 0">${escapeHtml(a.body)}</p>` : ''}
-        <p class="muted" style="margin:0.25rem 0 0">${a.publishedAt ? DATE_FMT.format(a.publishedAt) : ''} · ${escapeHtml(a.audience === 'all' ? 'Todos' : a.audience === 'customers' ? 'Clientes' : 'Gestores')}</p>
+        <p class="muted" style="margin:0.25rem 0 0">${a.publishedAt ? DATE_FMT.format(a.publishedAt) : ''} · ${escapeHtml(a.audience === 'all' ? 'Todos' : a.audience === 'customers' ? 'Clientes' : 'Playeros')}</p>
       </div>`,
     )
     .join('');

@@ -71,16 +71,17 @@ describe('ranking', () => {
     expect(res.headers.get('location')).toBe('/login');
   });
 
-  it('filtro de gestores sin usuarios muestra estado vacío', async () => {
+  it('el cliente ve solo clientes y sin filtros', async () => {
     const reg = await register('Ana Top', 'ana.ranking@test.com');
     const cookie = sessionCookie(reg);
-    const res = await get('/ranking?rol=gestores', cookie);
+    const res = await get('/ranking', cookie);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('Todavía no hay usuarios en el ranking');
-    expect(html).toContain('<span class="pill">Gestores</span>');
-    expect(html).toContain('href="/ranking?rol=clientes"');
-    expect(html).toContain('href="/ranking?rol=todos"');
+    expect(html).toContain('<span class="pill">Clientes</span>');
+    expect(html).toContain('Ana Top');
+    expect(html).not.toContain('href="/ranking?rol=clientes"');
+    expect(html).not.toContain('href="/ranking?rol=todos"');
+    expect(html).not.toContain('href="/ranking?rol=gestores"');
   });
 
   it('ordena por puntos, muestra posiciones y resalta al usuario', async () => {
@@ -110,39 +111,66 @@ describe('ranking', () => {
     expect(html).toContain('data-pos="3"');
   });
 
-  it('filtra por rol clientes y gestores', async () => {
+  it('filtra por rol: admin elige, cliente y playero ven su segmento', async () => {
     await setRole('bruno.ranking@test.com', 'store_manager');
-    await register('Goyo Gestor', 'goyo.ranking@test.com');
+    await register('Goyo Playero', 'goyo.ranking@test.com');
     await setRole('goyo.ranking@test.com', 'store_manager');
     await setPoints('goyo.ranking@test.com', 500);
 
-    const cookieAna = sessionCookie(await login('ana.ranking@test.com'));
+    // el admin ve los filtros y puede cambiar de segmento
+    const adminEmail = 'admin.ranking@test.com';
+    await register('Ada Admin', adminEmail);
+    await setRole(adminEmail, 'admin');
+    const cookieAdmin = sessionCookie(await login(adminEmail));
 
-    const gestores = await get('/ranking?rol=gestores', cookieAna);
+    const gestores = await get('/ranking?rol=gestores', cookieAdmin);
     expect(gestores.status).toBe(200);
     const gestoresHtml = await gestores.text();
-    expect(gestoresHtml).toContain('<strong>1</strong> Goyo Gestor');
+    expect(gestoresHtml).toContain('<strong>1</strong> Goyo Playero');
     expect(gestoresHtml).toContain('<strong>2</strong> Bruno Top');
     expect(gestoresHtml).toContain('500 pts');
-    expect(gestoresHtml).toContain('<span class="pill">Gestores</span>');
+    expect(gestoresHtml).toContain('<span class="pill">Playeros</span>');
+    expect(gestoresHtml).toContain('href="/ranking?rol=clientes"');
+    expect(gestoresHtml).toContain('href="/ranking?rol=todos"');
     expect(gestoresHtml).not.toContain('rank-row me');
     expect(gestoresHtml).not.toContain('<strong>3</strong> Ana Top');
 
-    const clientes = await get('/ranking?rol=clientes', cookieAna);
+    const clientes = await get('/ranking?rol=clientes', cookieAdmin);
     expect(clientes.status).toBe(200);
     const clientesHtml = await clientes.text();
     expect(clientesHtml).toContain('<strong>1</strong> Carla Top');
     expect(clientesHtml).toContain('<strong>2</strong> Ana Top');
-    expect(clientesHtml).toContain('class="rank-row me"');
     expect(clientesHtml).toContain('<span class="pill">Clientes</span>');
-    expect(clientesHtml).not.toContain('Goyo Gestor');
+    expect(clientesHtml).not.toContain('Goyo Playero');
 
-    const todos = await get('/ranking', cookieAna);
+    const todos = await get('/ranking', cookieAdmin);
     const todosHtml = await todos.text();
-    expect(todosHtml).toContain('<strong>1</strong> Goyo Gestor');
+    expect(todosHtml).toContain('<strong>1</strong> Goyo Playero');
     expect(todosHtml).toContain('<strong>2</strong> Bruno Top');
     expect(todosHtml).toContain('<strong>3</strong> Carla Top');
     expect(todosHtml).toContain('<strong>4</strong> Ana Top');
+
+    // el playero queda fijado en playeros, aunque pida otro segmento
+    const cookiePlayero = sessionCookie(
+      await login('goyo.ranking@test.com'),
+    );
+    const playero = await get('/ranking?rol=clientes', cookiePlayero);
+    expect(playero.status).toBe(200);
+    const playeroHtml = await playero.text();
+    expect(playeroHtml).toContain('<span class="pill">Playeros</span>');
+    expect(playeroHtml).not.toContain('href="/ranking?rol=');
+    expect(playeroHtml).toContain('<strong>1</strong> Goyo Playero');
+    expect(playeroHtml).toContain('class="rank-row me"');
+    expect(playeroHtml).not.toContain('Carla Top');
+
+    // el cliente queda fijado en clientes
+    const cookieCliente = sessionCookie(await login('ana.ranking@test.com'));
+    const cliente = await get('/ranking?rol=gestores', cookieCliente);
+    expect(cliente.status).toBe(200);
+    const clienteHtml = await cliente.text();
+    expect(clienteHtml).toContain('<span class="pill">Clientes</span>');
+    expect(clienteHtml).not.toContain('Goyo Playero');
+    expect(clienteHtml).toContain('class="rank-row me"');
   });
 
   it('muestra tu posición cuando no entrás en el top 50', async () => {

@@ -309,7 +309,7 @@ function headerNav(opts: PageOptions): string {
 function sidebarLinks(user: { name: string; points: number; role: string }): string {
   const role = user.role;
   const isAdmin = role === 'admin';
-  const isGestor = role === 'store_manager';
+  const isPlayero = role === 'store_manager';
 
   const items: { href: string; label: string }[] = isAdmin
     ? [
@@ -323,11 +323,10 @@ function sidebarLinks(user: { name: string; points: number; role: string }): str
         { href: '/operativa/resumen-diario', label: 'Resumen diario' },
         { href: '/ranking', label: 'Ranking' },
       ]
-    : isGestor
+    : isPlayero
       ? [
           { href: '/app', label: 'Inicio' },
           { href: '/operativa', label: 'Operativa' },
-          { href: '/operativa/caja/movimientos', label: 'Movimientos' },
           { href: '/admin/ordenes', label: 'Órdenes' },
           { href: '/ranking', label: 'Ranking' },
         ]

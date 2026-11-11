@@ -15,11 +15,17 @@ type RolFilter = 'todos' | 'clientes' | 'gestores';
 const ROL_LABELS: Record<RolFilter, string> = {
   todos: 'Todos',
   clientes: 'Clientes',
-  gestores: 'Gestores',
+  gestores: 'Playeros',
 };
 
 function parseRol(v: string | undefined): RolFilter {
   return v === 'clientes' || v === 'gestores' ? v : 'todos';
+}
+
+// P7: el cliente ve solo clientes, el playero solo playeros, el admin elige.
+function rolForSession(role: string, query: string | undefined): RolFilter {
+  if (role === 'admin') return parseRol(query);
+  return role === 'store_manager' ? 'gestores' : 'clientes';
 }
 
 function rolCondition(rol: RolFilter) {
@@ -39,7 +45,7 @@ function roleLabel(role: string): string {
     case 'admin':
       return 'Admin';
     case 'store_manager':
-      return 'Gestor';
+      return 'Playero';
     case 'customer':
       return 'Cliente';
     default:
@@ -47,7 +53,11 @@ function roleLabel(role: string): string {
   }
 }
 
-function filtersHtml(rol: RolFilter): string {
+// Solo el admin ve los filtros; el resto queda fijado en su segmento.
+function filtersHtml(rol: RolFilter, isAdmin: boolean): string {
+  if (!isAdmin) {
+    return `<p class="row" style="margin:0 0 0.75rem"><span class="pill">${ROL_LABELS[rol]}</span></p>`;
+  }
   const pills = (Object.keys(ROL_LABELS) as RolFilter[])
     .map((r) =>
       r === rol
@@ -87,7 +97,8 @@ function rankRow(opts: {
 rankingRoutes.get('/ranking', requireAuth(), async (c) => {
   const sessionUser = c.get('user')!;
   const db = dbOf(c);
-  const rol = parseRol(c.req.query('rol'));
+  const isAdmin = sessionUser.role === 'admin';
+  const rol = rolForSession(sessionUser.role, c.req.query('rol'));
   const condition = rolCondition(rol);
 
   if (sessionUser.role !== 'admin') {
@@ -169,7 +180,7 @@ rankingRoutes.get('/ranking', requireAuth(), async (c) => {
       <div class="card">
         <h1>Ranking</h1>
         <p class="muted">El ranking se ordena por puntos acumulados. Sumá puntos con desafíos, sesiones y compras.</p>
-        ${filtersHtml(rol)}
+        ${filtersHtml(rol, isAdmin)}
         ${list}
         ${myRow}
         <p style="margin-top:1rem"><a class="btn secondary" href="/app">Volver al inicio</a></p>

@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import type { Context } from 'hono';
+import type { Context, Next } from 'hono';
 import { and, asc, desc, eq, gte, lt, sql } from 'drizzle-orm';
 import type { AppEnv } from '../env';
 import type { SessionUser } from '../lib/session';
@@ -315,15 +315,42 @@ function filterBar(path: string, fecha: string, storesHtml: string): string {
   </form>`;
 }
 
+// El playero solo entra a /operativa y a la rendición del turno.
+// Caja, ventas, actividades, lubricantes, sorteo y resumen diario son del admin.
+async function playeroSoloRendicion(
+  c: Context<AppEnv>,
+  next: Next,
+): Promise<Response | void> {
+  const user = c.get('user');
+  if (user?.role === 'store_manager') {
+    const path = c.req.path;
+    if (path !== '/operativa' && !path.startsWith('/operativa/rendicion')) {
+      return render(
+        c,
+        'Sin permiso',
+        `<div class="card">
+          <h1>No tenés permiso para ver esta sección</h1>
+          <p class="muted">Tu rol actual: Playero. Esta sección es solo del administrador.</p>
+          <a class="btn" href="/app">Volver al inicio</a>
+        </div>`,
+        { status: 403 },
+      );
+    }
+  }
+  await next();
+}
+
 operativaRoutes.use(
   '/operativa',
   requireAuth(),
   requireRole('admin', 'store_manager'),
+  playeroSoloRendicion,
 );
 operativaRoutes.use(
   '/operativa/*',
   requireAuth(),
   requireRole('admin', 'store_manager'),
+  playeroSoloRendicion,
 );
 
 operativaRoutes.get('/operativa', async (c) => {
@@ -389,63 +416,72 @@ operativaRoutes.get('/operativa', async (c) => {
     <a class="btn secondary" href="${href}" style="margin-top:0.25rem">Abrir módulo</a>
   </div>`;
 
-  const cards = [
-    indexCard(
-      'Caja diaria',
-      'Apertura y cierre de caja por día y tienda.',
-      '/operativa/caja',
-      cash[0]
-        ? `${fmtDay(cash[0].reportDate)} · ${cash[0].status === 'open' ? 'Abierta' : 'Cerrada'} · Apertura ${formatArs(cash[0].openingCents)}${cash[0].differenceCents !== null ? ` · Diferencia ${formatArs(cash[0].differenceCents)}` : ''}`
-        : NO_DATA,
-    ),
-    indexCard(
-      'Resumen de ventas',
-      'Totales por medio de pago, por día y turno.',
-      '/operativa/ventas',
-      sales[0]
-        ? `${fmtDay(sales[0].reportDate)} · Turno ${SHIFT_LABELS[sales[0].shift]} · Total ${formatArs(sales[0].totalCents)}`
-        : NO_DATA,
-    ),
-    indexCard(
-      'Resumen diario de actividades',
-      'Matriz de GNC y revisión de surtidores por turno.',
-      '/operativa/actividades',
-      daily[0]
-        ? `${fmtDay(daily[0].reportDate)} · Turno ${SHIFT_LABELS[daily[0].shift]} · GNC ${daily[0].gncVolume} m³`
-        : NO_DATA,
-    ),
-    indexCard(
-      'Stock de lubricantes',
-      'Reconteo de envases de aceite por tienda.',
-      '/operativa/lubricantes',
-      lube[0]
-        ? `${fmtDay(lube[0].reportDate)} · ${escapeHtml(lube[0].brand)} ${escapeHtml(lube[0].grade)} · Cierre ${lube[0].closingQty}`
-        : NO_DATA,
-    ),
-    indexCard(
-      'Rendición de turno',
-      'Lecturas de surtidores y puente de medición.',
-      '/operativa/rendicion',
-      shift[0]
-        ? `${fmtDay(shift[0].reportDate)} · Turno ${SHIFT_LABELS[shift[0].shift]} · Ventas ${formatArs(shift[0].totalSalesCents)}`
-        : NO_DATA,
-    ),
-    indexCard(
-      'Cupón de sorteo',
-      'Emisión de códigos y marcado de ganadores.',
-      '/operativa/sorteo',
-      raf[0]
-        ? `Último: ${escapeHtml(raf[0].code)} · ${raf[0].winning ? 'Ganador' : 'Emitido'} · ${fmtMoment(raf[0].issuedAt)}`
-        : NO_DATA,
-    ),
-  ].join('');
+  const isAdmin = c.get('user')?.role === 'admin';
+
+  const rendicionCard = indexCard(
+    'Rendición de turno',
+    'Lecturas de surtidores y puente de medición.',
+    '/operativa/rendicion',
+    shift[0]
+      ? `${fmtDay(shift[0].reportDate)} · Turno ${SHIFT_LABELS[shift[0].shift]} · Ventas ${formatArs(shift[0].totalSalesCents)}`
+      : NO_DATA,
+  );
+
+  // El playero solo carga rendiciones; el admin ve todos los módulos.
+  const cards = (
+    isAdmin
+      ? [
+          indexCard(
+            'Caja diaria',
+            'Apertura y cierre de caja por día y tienda.',
+            '/operativa/caja',
+            cash[0]
+              ? `${fmtDay(cash[0].reportDate)} · ${cash[0].status === 'open' ? 'Abierta' : 'Cerrada'} · Apertura ${formatArs(cash[0].openingCents)}${cash[0].differenceCents !== null ? ` · Diferencia ${formatArs(cash[0].differenceCents)}` : ''}`
+              : NO_DATA,
+          ),
+          indexCard(
+            'Resumen de ventas',
+            'Totales por medio de pago, por día y turno.',
+            '/operativa/ventas',
+            sales[0]
+              ? `${fmtDay(sales[0].reportDate)} · Turno ${SHIFT_LABELS[sales[0].shift]} · Total ${formatArs(sales[0].totalCents)}`
+              : NO_DATA,
+          ),
+          indexCard(
+            'Resumen diario de actividades',
+            'Matriz de GNC y revisión de surtidores por turno.',
+            '/operativa/actividades',
+            daily[0]
+              ? `${fmtDay(daily[0].reportDate)} · Turno ${SHIFT_LABELS[daily[0].shift]} · GNC ${daily[0].gncVolume} m³`
+              : NO_DATA,
+          ),
+          indexCard(
+            'Stock de lubricantes',
+            'Reconteo de envases de aceite por tienda.',
+            '/operativa/lubricantes',
+            lube[0]
+              ? `${fmtDay(lube[0].reportDate)} · ${escapeHtml(lube[0].brand)} ${escapeHtml(lube[0].grade)} · Cierre ${lube[0].closingQty}`
+              : NO_DATA,
+          ),
+          rendicionCard,
+          indexCard(
+            'Cupón de sorteo',
+            'Emisión de códigos y marcado de ganadores.',
+            '/operativa/sorteo',
+            raf[0]
+              ? `Último: ${escapeHtml(raf[0].code)} · ${raf[0].winning ? 'Ganador' : 'Emitido'} · ${fmtMoment(raf[0].issuedAt)}`
+              : NO_DATA,
+          ),
+        ]
+      : [rendicionCard]
+  ).join('');
 
   return render(
     c,
     'Operativa',
     `<div class="card">
       <h1>Operativa diaria</h1>
-      <p class="muted">Seis formularios de la estación, ahora digitales. Tienda activa: <strong>${escapeHtml(storeName)}</strong>.</p>
+      <p class="muted">${isAdmin ? 'Seis formularios de la estación, ahora digitales.' : 'Cargá la rendición de tu turno.'} Tienda activa: <strong>${escapeHtml(storeName)}</strong>.</p>
       <a class="btn secondary" href="/app">Volver al inicio</a>
     </div>
     ${cards}`,

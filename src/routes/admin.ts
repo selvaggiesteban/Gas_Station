@@ -25,9 +25,14 @@ import {
 } from '../db/schema';
 import {
   approveOrder,
+  decrementStockGuard,
+  findAutoGestor,
+  insertOrderItems,
+  insertOrderWithRetry,
   mimeFromKey,
   rejectOrder,
   ensureDefaultStore,
+  restoreStock,
   sanitizeFilename,
 } from '../services/orders';
 
@@ -37,7 +42,7 @@ type OrderStatus = (typeof ORDER_STATUS_VALUES)[number];
 
 const ROLE_LABELS: Record<Role, string> = {
   admin: 'Admin',
-  store_manager: 'Gestor de tienda',
+  store_manager: 'Playero',
   customer: 'Cliente',
 };
 
@@ -193,8 +198,24 @@ function notFoundBody(volver: string): string {
 
 export const adminRoutes = new Hono<AppEnv>();
 
+// El playero (store_manager) solo entra a las rutas de órdenes:
+// listado, detalle, comprobante y nueva orden. Aprobar/rechazar es solo admin.
+const PLAYERO_ADMIN_PATHS = [
+  /^\/admin\/ordenes$/,
+  /^\/admin\/ordenes\/nueva$/,
+  /^\/admin\/ordenes\/\d+$/,
+  /^\/admin\/comprobantes\/\d+$/,
+];
+
 adminRoutes.use('/admin', requireRole('admin'));
-adminRoutes.use('/admin/*', requireRole('admin'));
+adminRoutes.use('/admin/*', async (c, next) => {
+  const user = c.get('user');
+  if (user?.role === 'store_manager') {
+    const path = c.req.path;
+    if (PLAYERO_ADMIN_PATHS.some((re) => re.test(path))) return next();
+  }
+  return requireRole('admin')(c, next);
+});
 
 // ---------------------------------------------------------------- dashboard
 
@@ -235,7 +256,7 @@ adminRoutes.get('/admin', async (c) => {
         <h2>Secciones</h2>
         <ul>
           <li><a href="/admin/usuarios">Usuarios y roles</a></li>
-          <li><a href="/admin/tienda">Tienda y gestores</a></li>
+          <li><a href="/admin/tienda">Tienda y playeros</a></li>
           <li><a href="/admin/desafios">Desafíos semanales</a></li>
           <li><a href="/admin/ordenes">Órdenes y comprobantes</a></li>
         </ul>
@@ -595,7 +616,7 @@ adminRoutes.get('/admin/tienda', async (c) => {
       <td style="${TD}">
         <form method="post" action="/admin/tienda/gestores/quitar" style="display:inline">
           <input type="hidden" name="userId" value="${g.userId}">
-          <button type="submit" class="secondary" style="${SMALL_BTN}">Quitá gestor</button>
+          <button type="submit" class="secondary" style="${SMALL_BTN}">Quitá playero</button>
         </form>
       </td>
     </tr>`,
@@ -645,24 +666,24 @@ adminRoutes.get('/admin/tienda', async (c) => {
         </form>
       </div>
       <div class="card">
-        <h2>Gestores asignados</h2>
+        <h2>Playeros asignados</h2>
         <table class="papel">
           <thead><tr>
             <th style="${TH}">Nombre</th>
             <th style="${TH}">Email</th>
             <th style="${TH}">Acciones</th>
           </tr></thead>
-          <tbody>${filasGestores || `<tr><td colspan="3" style="${TD}" class="muted">Todavía no hay gestores asignados.</td></tr>`}</tbody>
+          <tbody>${filasGestores || `<tr><td colspan="3" style="${TD}" class="muted">Todavía no hay playeros asignados.</td></tr>`}</tbody>
         </table>
-        <h2 style="margin-top:1rem">Asigná gestor</h2>
+        <h2 style="margin-top:1rem">Asigná playero</h2>
         ${
           disponibles.length
             ? `<form method="post" action="/admin/tienda/gestores">
-          <label for="userId">Usuario con rol gestor de tienda</label>
+          <label for="userId">Usuario con rol playero</label>
           <select id="userId" name="userId" required>${opcionesGestor}</select>
-          <button type="submit">Asigná gestor</button>
+          <button type="submit">Asigná playero</button>
         </form>`
-            : `<p class="muted">No hay usuarios con rol gestor de tienda disponibles. Creá o reasigná usuarios desde <a href="/admin/usuarios">Usuarios</a>.</p>`
+            : `<p class="muted">No hay usuarios con rol playero disponibles. Creá o reasigná usuarios desde <a href="/admin/usuarios">Usuarios</a>.</p>`
         }
       </div>
       <div class="card">
@@ -708,7 +729,7 @@ adminRoutes.post('/admin/tienda/gestores', async (c) => {
   const userId = Number(str(body.userId));
   if (!Number.isInteger(userId) || userId <= 0) {
     return render(c, 'Tienda', notFoundBody(volver), {
-      error: 'Seleccioná un gestor válido.',
+      error: 'Seleccioná un playero válido.',
     });
   }
   const db = dbOf(c);
@@ -725,7 +746,7 @@ adminRoutes.post('/admin/tienda/gestores', async (c) => {
   }
   if (userRows[0].role !== 'store_manager') {
     return render(c, 'Tienda', notFoundBody(volver), {
-      error: 'Ese usuario no tiene el rol de gestor de tienda.',
+      error: 'Ese usuario no tiene el rol de playero.',
     });
   }
   const yaAsignado = await db
@@ -735,7 +756,7 @@ adminRoutes.post('/admin/tienda/gestores', async (c) => {
     .limit(1);
   if (yaAsignado[0]) {
     return render(c, 'Tienda', notFoundBody(volver), {
-      error: 'Ese gestor ya está asignado a la tienda.',
+      error: 'Ese playero ya está asignado a la tienda.',
     });
   }
   await db.insert(storeUser).values({ storeId: store.id, userId });
@@ -747,7 +768,7 @@ adminRoutes.post('/admin/tienda/gestores/quitar', async (c) => {
   const userId = Number(str(body.userId));
   if (!Number.isInteger(userId) || userId <= 0) {
     return render(c, 'Tienda', notFoundBody('/admin/tienda'), {
-      error: 'Seleccioná un gestor válido.',
+      error: 'Seleccioná un playero válido.',
     });
   }
   const db = dbOf(c);
@@ -1253,6 +1274,7 @@ function ordenAvisoDe(c: Context<AppEnv>): string | undefined {
     return 'Orden aprobada. Si correspondía, se acreditaron los puntos.';
   }
   if (v === 'rechazada') return 'Orden rechazada y stock devuelto.';
+  if (v === 'nueva') return 'Orden creada como pendiente. El admin la aprueba.';
   if (v === 'ok') return 'Cambios guardados.';
   return undefined;
 }
@@ -1380,6 +1402,9 @@ adminRoutes.get('/admin/ordenes', async (c) => {
       },
       `<div class="card">
         <h1>Órdenes</h1>
+        <div class="row" style="margin-bottom:0.75rem">
+          <a class="btn" href="/admin/ordenes/nueva">Nueva orden</a>
+        </div>
         <form method="get" action="/admin/ordenes" class="row">
           <select name="estado" style="width:auto;margin-top:0">
             <option value="">Todos los estados</option>
@@ -1399,7 +1424,7 @@ adminRoutes.get('/admin/ordenes', async (c) => {
             <th style="${TH}">Fecha</th>
             <th style="${TH}">Cliente</th>
             <th style="${TH}">Tienda</th>
-            <th style="${TH}">Gestor</th>
+            <th style="${TH}">Playero</th>
             <th style="${TH}">Total</th>
             <th style="${TH}">Estado</th>
             <th style="${TH}">Comprobante</th>
@@ -1411,6 +1436,197 @@ adminRoutes.get('/admin/ordenes', async (c) => {
       </div>`,
     ),
   );
+});
+
+adminRoutes.get('/admin/ordenes/nueva', async (c) => {
+  const db = dbOf(c);
+  const [clientesRows, productosRows] = await Promise.all([
+    db
+      .select({ id: users.id, name: users.name, email: users.email })
+      .from(users)
+      .where(eq(users.active, true))
+      .orderBy(asc(users.name), asc(users.id)),
+    db
+      .select({
+        id: products.id,
+        name: products.name,
+        priceCents: products.priceCents,
+        stock: products.stock,
+      })
+      .from(products)
+      .where(eq(products.active, true))
+      .orderBy(asc(products.name), asc(products.id)),
+  ]);
+
+  const opcionesClientes = clientesRows
+    .map(
+      (u) =>
+        `<option value="${u.id}">${escapeHtml(u.name)} · ${escapeHtml(u.email)}</option>`,
+    )
+    .join('');
+
+  const filasProductos = productosRows
+    .map(
+      (p) => `<tr>
+      <td style="${TD}">${escapeHtml(p.name)}</td>
+      <td style="${TD}">${formatArs(p.priceCents)}</td>
+      <td style="${TD}">${p.stock === null ? 'Sin límite' : p.stock}</td>
+      <td style="${TD_NUM}"><input type="number" name="qty_${p.id}" value="0" min="0" step="1" inputmode="numeric" style="max-width:6rem;text-align:right" aria-label="Cantidad de ${escapeHtml(p.name)}"></td>
+    </tr>`,
+    )
+    .join('');
+
+  return c.html(
+    page(
+      { title: 'Nueva orden', brand: brandOf(c), user: c.get('user') },
+      `<div class="card">
+        <h1>Nueva orden</h1>
+        <p class="muted">Cargá una orden a mano. Queda <strong>pendiente</strong> y el admin la aprueba.</p>
+        <form method="post" action="/admin/ordenes/nueva">
+          <label for="userId">Cliente</label>
+          <select id="userId" name="userId" required>
+            <option value="">Elegí un cliente…</option>
+            ${opcionesClientes}
+          </select>
+          <label for="pago">Método de pago</label>
+          <select id="pago" name="pago" required>
+            <option value="transferencia">Transferencia bancaria</option>
+            <option value="mercadopago">Mercado Pago</option>
+          </select>
+          <label for="notas">Notas (opcional)</label>
+          <textarea id="notas" name="notas" rows="2" maxlength="500"></textarea>
+          <button type="submit">Creá la orden</button>
+          <a class="btn secondary" href="/admin/ordenes">Volver a órdenes</a>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Productos</h2>
+        <p class="muted">Poné la cantidad de cada producto. Los que quedan en 0 no se agregan.</p>
+        <table class="papel">
+          <thead><tr>
+            <th style="${TH}">Producto</th>
+            <th style="${TH}">Precio</th>
+            <th style="${TH}">Stock</th>
+            <th style="${TH}">Cantidad</th>
+          </tr></thead>
+          <tbody>${filasProductos || `<tr><td colspan="4" style="${TD}" class="muted">No hay productos activos.</td></tr>`}</tbody>
+        </table>
+      </div>`,
+    ),
+  );
+});
+
+adminRoutes.post('/admin/ordenes/nueva', async (c) => {
+  const volver = '<a class="btn secondary" href="/admin/ordenes/nueva">Volver</a>';
+  const body = await c.req.parseBody();
+  const userId = Number(str(body.userId));
+  const pago = str(body.pago);
+  const notas = str(body.notas);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return render(
+      c,
+      'Nueva orden',
+      `<div class="card"><h1>No se creó</h1><p class="muted">Elegí un cliente.</p>${volver}</div>`,
+      { error: 'Elegí un cliente.' },
+    );
+  }
+  if (pago !== 'transferencia' && pago !== 'mercadopago') {
+    return render(
+      c,
+      'Nueva orden',
+      `<div class="card"><h1>No se creó</h1><p class="muted">Elegí un método de pago válido.</p>${volver}</div>`,
+      { error: 'Elegí un método de pago válido.' },
+    );
+  }
+
+  const db = dbOf(c);
+  const clienteRows = await db
+    .select({ id: users.id, active: users.active })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!clienteRows[0] || !clienteRows[0].active) {
+    return render(
+      c,
+      'Nueva orden',
+      `<div class="card"><h1>No se creó</h1><p class="muted">El cliente elegido no existe o está inactivo.</p>${volver}</div>`,
+      { error: 'El cliente elegido no existe o está inactivo.' },
+    );
+  }
+
+  const productoRows = await db
+    .select()
+    .from(products)
+    .where(eq(products.active, true));
+  const lines = productoRows
+    .map((p) => ({ product: p, qty: Number(str(body[`qty_${p.id}`])) || 0 }))
+    .filter((l) => l.qty > 0);
+  if (lines.length === 0) {
+    return render(
+      c,
+      'Nueva orden',
+      `<div class="card"><h1>No se creó</h1><p class="muted">Poné la cantidad de al menos un producto.</p>${volver}</div>`,
+      { error: 'Poné la cantidad de al menos un producto.' },
+    );
+  }
+  for (const line of lines) {
+    if (!Number.isInteger(line.qty) || line.qty < 0) {
+      return render(
+        c,
+        'Nueva orden',
+        `<div class="card"><h1>No se creó</h1><p class="muted">Las cantidades tienen que ser números enteros.</p>${volver}</div>`,
+        { error: 'Las cantidades tienen que ser números enteros.' },
+      );
+    }
+    if (line.product.stock !== null && line.product.stock < line.qty) {
+      return render(
+        c,
+        'Nueva orden',
+        `<div class="card"><h1>No se creó</h1><p class="muted">No hay stock suficiente de "${escapeHtml(line.product.name)}" (disponible: ${line.product.stock}).</p>${volver}</div>`,
+        { error: `No hay stock suficiente de "${line.product.name}".` },
+      );
+    }
+  }
+
+  const subtotalCents = lines.reduce(
+    (acc, l) => acc + l.product.priceCents * l.qty,
+    0,
+  );
+
+  const stock = await decrementStockGuard(db, lines);
+  if (!stock.ok) {
+    return render(
+      c,
+      'Nueva orden',
+      `<div class="card"><h1>No se creó</h1><p class="muted">${escapeHtml(stock.error)}</p>${volver}</div>`,
+      { error: stock.error },
+    );
+  }
+
+  let order;
+  try {
+    const storeId = await ensureDefaultStore(db);
+    const me = c.get('user')!;
+    const gestorId =
+      me.role === 'store_manager' ? me.id : await findAutoGestor(db, storeId);
+    order = await insertOrderWithRetry(db, {
+      userId,
+      storeId,
+      gestorId,
+      subtotalCents,
+      discountCents: 0,
+      totalCents: subtotalCents,
+      couponId: null,
+      paymentMethod: pago,
+      notes: notas || null,
+    });
+    await insertOrderItems(db, order.id, lines);
+  } catch (err) {
+    await restoreStock(db, stock.decremented);
+    throw err;
+  }
+
+  return c.redirect(`/admin/ordenes/${order.id}?aviso=nueva`);
 });
 
 adminRoutes.get('/admin/ordenes/:id', async (c) => {
@@ -1479,8 +1695,9 @@ adminRoutes.get('/admin/ordenes/:id', async (c) => {
        <img src="/admin/comprobantes/${order.id}" alt="Comprobante" style="max-width:100%;border-radius:0.5rem;border:1px solid #e4e4e7;margin-top:0.5rem">`
     : '<p class="muted">Sin comprobante adjunto.</p>';
 
+  const isAdmin = c.get('user')?.role === 'admin';
   const acciones =
-    order.status === 'pending'
+    isAdmin && order.status === 'pending'
       ? `<div class="row" style="margin-top:1rem">
           <form method="post" action="/admin/ordenes/${order.id}/aprobar" style="display:inline;margin-top:0">
             <button type="submit" style="${SMALL_BTN}">Aprobá el pago</button>
@@ -1491,7 +1708,9 @@ adminRoutes.get('/admin/ordenes/:id', async (c) => {
             <button type="submit" class="secondary" style="${SMALL_BTN}">Rechazá</button>
           </form>
         </div>`
-      : '';
+      : order.status === 'pending'
+        ? '<p class="muted" style="margin-top:1rem">Pendiente de aprobación por el admin.</p>'
+        : '';
 
   const historial = [
     order.paidAt ? `<div class="row"><span>Pago registrado</span><span>${fmtFecha(order.paidAt)}</span></div>` : '',
@@ -1520,7 +1739,7 @@ adminRoutes.get('/admin/ordenes/:id', async (c) => {
           <span class="muted">Creada: ${fmtFecha(order.createdAt)}</span>
           <span class="muted">Pago: ${order.paymentMethod === 'transferencia' ? 'Transferencia bancaria' : 'Mercado Pago'}</span>
         </div>
-        <p class="muted">Cliente: ${cliente ? `${escapeHtml(cliente.name)} · ${escapeHtml(cliente.email)}` : `#${order.userId}`} · Tienda: ${store ? escapeHtml(store.name) : `#${order.storeId}`}${gestor ? ` · Gestor: ${escapeHtml(gestor.name)}` : ''}</p>
+        <p class="muted">Cliente: ${cliente ? `${escapeHtml(cliente.name)} · ${escapeHtml(cliente.email)}` : `#${order.userId}`} · Tienda: ${store ? escapeHtml(store.name) : `#${order.storeId}`}${gestor ? ` · Playero: ${escapeHtml(gestor.name)}` : ''}</p>
         ${acciones}
       </div>
       <div class="card">

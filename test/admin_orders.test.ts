@@ -148,6 +148,7 @@ type Escenario = {
   clienteEmail: string;
   clienteCookie: string;
   gestorId: number;
+  gestorCookie: string;
   storeId: number;
   storeName: string;
   productId: number;
@@ -166,7 +167,7 @@ async function crearEscenario(
   const clienteId = await userIdByEmail(clienteEmail);
 
   const gestorEmail = `${uniq('gestor-ordenes')}@test.com`;
-  await register('Gestor Órdenes', gestorEmail);
+  const gestorCookie = await register('Gestor Órdenes', gestorEmail);
   await env.DB.prepare("update users set role = 'store_manager' where email = ?")
     .bind(gestorEmail)
     .run();
@@ -208,6 +209,7 @@ async function crearEscenario(
     clienteEmail,
     clienteCookie,
     gestorId,
+    gestorCookie,
     storeId,
     storeName,
     productId,
@@ -440,5 +442,137 @@ describe('admin órdenes', () => {
     expect(row.status).toBe('pending');
     expect(row.notes).toBeNull();
     expect(await productStock(esc.productId)).toBe(3);
+  });
+
+  it('el playero ve órdenes pero no aprueba ni rechaza', async () => {
+    const esc = await crearEscenario();
+
+    const listado = await get('/admin/ordenes', esc.gestorCookie);
+    expect(listado.status).toBe(200);
+    expect(await listado.text()).toContain(esc.number);
+
+    const detalle = await get(`/admin/ordenes/${esc.orderId}`, esc.gestorCookie);
+    expect(detalle.status).toBe(200);
+    const html = await detalle.text();
+    expect(html).toContain('Pendiente de aprobación por el admin');
+    expect(html).not.toContain('Aprobá el pago');
+    expect(html).not.toContain('Motivo del rechazo');
+
+    const comprobante = await get(
+      `/admin/comprobantes/${esc.orderId}`,
+      esc.gestorCookie,
+    );
+    expect(comprobante.status).toBe(200);
+
+    const aprobar = await post(
+      `/admin/ordenes/${esc.orderId}/aprobar`,
+      {},
+      esc.gestorCookie,
+    );
+    expect(aprobar.status).toBe(403);
+    expect((await orderRow(esc.orderId)).status).toBe('pending');
+
+    const rechazar = await post(
+      `/admin/ordenes/${esc.orderId}/rechazar`,
+      { motivo: 'intento del playero' },
+      esc.gestorCookie,
+    );
+    expect(rechazar.status).toBe(403);
+    expect((await orderRow(esc.orderId)).status).toBe('pending');
+
+    const usuarios = await get('/admin/usuarios', esc.gestorCookie);
+    expect(usuarios.status).toBe(403);
+
+    const tienda = await get('/admin/tienda', esc.gestorCookie);
+    expect(tienda.status).toBe(403);
+  });
+
+  it('el playero crea una orden a mano: queda pendiente con stock descontado', async () => {
+    const esc = await crearEscenario({ stock: 10 });
+
+    const formulario = await get('/admin/ordenes/nueva', esc.gestorCookie);
+    expect(formulario.status).toBe(200);
+    expect(await formulario.text()).toContain('Nueva orden');
+
+    const stockAntes = await productStock(esc.productId);
+    const creada = await post(
+      '/admin/ordenes/nueva',
+      {
+        userId: String(esc.clienteId),
+        pago: 'transferencia',
+        notas: 'Venta en el mostrador',
+        [`qty_${esc.productId}`]: '3',
+      },
+      esc.gestorCookie,
+    );
+    expect(creada.status).toBe(302);
+    const loc = creada.headers.get('location') ?? '';
+    expect(loc).toMatch(/^\/admin\/ordenes\/\d+\?aviso=nueva$/);
+
+    const nuevaId = Number(/ordenes\/(\d+)/.exec(loc)![1]);
+    const row = await orderRow(nuevaId);
+    expect(row.status).toBe('pending');
+    expect(row.notes).toBe('Venta en el mostrador');
+    expect(await productStock(esc.productId)).toBe((stockAntes ?? 10) - 3);
+
+    const detalle = await get(`/admin/ordenes/${nuevaId}`, esc.gestorCookie);
+    expect(await detalle.text()).toContain('Aceite 20W50');
+
+    const gestorRow = await env.DB.prepare(
+      'select gestor_id from orders where id = ?',
+    )
+      .bind(nuevaId)
+      .first<{ gestor_id: number | null }>();
+    expect(gestorRow?.gestor_id).toBe(esc.gestorId);
+
+    // el admin la ve y la aprueba
+    const aprueba = await post(
+      `/admin/ordenes/${nuevaId}/aprobar`,
+      {},
+      esc.adminCookie,
+    );
+    expect(aprueba.status).toBe(302);
+    expect((await orderRow(nuevaId)).status).toBe('paid');
+    expect(await productStock(esc.productId)).toBe((stockAntes ?? 10) - 3);
+  });
+
+  it('nueva orden valida cliente, método de pago, stock y cantidades', async () => {
+    const esc = await crearEscenario({ stock: 2 });
+
+    const sinCliente = await post(
+      '/admin/ordenes/nueva',
+      { userId: '', pago: 'transferencia', [`qty_${esc.productId}`]: '1' },
+      esc.adminCookie,
+    );
+    expect(sinCliente.status).toBe(422);
+    expect(await sinCliente.text()).toContain('Elegí un cliente');
+
+    const pagoInvalido = await post(
+      '/admin/ordenes/nueva',
+      {
+        userId: String(esc.clienteId),
+        pago: 'efectivo',
+        [`qty_${esc.productId}`]: '1',
+      },
+      esc.adminCookie,
+    );
+    expect(pagoInvalido.status).toBe(422);
+
+    const sinProductos = await post(
+      '/admin/ordenes/nueva',
+      { userId: String(esc.clienteId), pago: 'transferencia' },
+      esc.adminCookie,
+    );
+    expect(sinProductos.status).toBe(422);
+    expect(await sinProductos.text()).toContain('al menos un producto');
+
+    const stockInsuficiente = await post(
+      '/admin/ordenes/nueva',
+      { userId: String(esc.clienteId), pago: 'transferencia', [`qty_${esc.productId}`]: '5' },
+      esc.adminCookie,
+    );
+    expect(stockInsuficiente.status).toBe(422);
+    expect(await stockInsuficiente.text()).toContain('stock suficiente');
+    expect(await productStock(esc.productId)).toBe(2);
   });
 });

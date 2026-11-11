@@ -178,21 +178,25 @@ export type NewOrderValues = {
   discountCents: number;
   totalCents: number;
   couponId: number | null;
+  paymentMethod?: 'transferencia' | 'mercadopago';
+  notes?: string | null;
 };
 
 export async function insertOrderWithRetry(
   db: Db,
   values: NewOrderValues,
 ): Promise<OrderRow> {
+  const { paymentMethod = 'transferencia', notes = null, ...rest } = values;
   for (let attempt = 0; attempt < 10; attempt++) {
     try {
       const rows = await db
         .insert(orders)
         .values({
-          ...values,
+          ...rest,
           number: randomOrderNumber(),
           status: 'pending',
-          paymentMethod: 'transferencia',
+          paymentMethod,
+          notes,
         })
         .returning();
       return rows[0]!;

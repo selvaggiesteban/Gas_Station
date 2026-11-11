@@ -13,7 +13,6 @@ import {
   cashLines,
   dailyActivities,
   dailyActivitySummary,
-  lubricantStocks,
   products,
   raffleCoupons,
   salesSummaries,
@@ -316,7 +315,7 @@ function filterBar(path: string, fecha: string, storesHtml: string): string {
 }
 
 // El playero solo entra a /operativa y a la rendición del turno.
-// Caja, ventas, actividades, lubricantes, sorteo y resumen diario son del admin.
+// Caja, ventas, actividades, sorteo y resumen diario son del admin.
 async function playeroSoloRendicion(
   c: Context<AppEnv>,
   next: Next,
@@ -365,7 +364,7 @@ operativaRoutes.get('/operativa', async (c) => {
     .limit(1);
   const storeName = storeRows[0]?.name ?? '—';
 
-  const [cash, sales, daily, lube, shift, raf] = await Promise.all([
+  const [cash, sales, daily, shift, raf] = await Promise.all([
     db
       .select()
       .from(cashDays)
@@ -383,12 +382,6 @@ operativaRoutes.get('/operativa', async (c) => {
       .from(dailyActivities)
       .where(eq(dailyActivities.storeId, storeId))
       .orderBy(desc(dailyActivities.reportDate), desc(dailyActivities.id))
-      .limit(1),
-    db
-      .select()
-      .from(lubricantStocks)
-      .where(eq(lubricantStocks.storeId, storeId))
-      .orderBy(desc(lubricantStocks.reportDate), desc(lubricantStocks.id))
       .limit(1),
     db
       .select()
@@ -455,18 +448,10 @@ operativaRoutes.get('/operativa', async (c) => {
               ? `${fmtDay(daily[0].reportDate)} · Turno ${SHIFT_LABELS[daily[0].shift]} · GNC ${daily[0].gncVolume} m³`
               : NO_DATA,
           ),
-          indexCard(
-            'Stock de lubricantes',
-            'Reconteo de envases de aceite por tienda.',
-            '/operativa/lubricantes',
-            lube[0]
-              ? `${fmtDay(lube[0].reportDate)} · ${escapeHtml(lube[0].brand)} ${escapeHtml(lube[0].grade)} · Cierre ${lube[0].closingQty}`
-              : NO_DATA,
-          ),
           rendicionCard,
           indexCard(
-            'Cupón de sorteo',
-            'Emisión de códigos y marcado de ganadores.',
+            'Sorteo',
+            'Inscriptos automáticos al registrarse; marcá al ganador.',
             '/operativa/sorteo',
             raf[0]
               ? `Último: ${escapeHtml(raf[0].code)} · ${raf[0].winning ? 'Ganador' : 'Emitido'} · ${fmtMoment(raf[0].issuedAt)}`
@@ -1037,14 +1022,6 @@ operativaRoutes.post('/operativa/caja/movimientos', async (c) => {
   return c.redirect(`${back}&aviso=1`);
 });
 
-function randomRaffleCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const bytes = crypto.getRandomValues(new Uint8Array(8));
-  let out = '';
-  for (const b of bytes) out += chars[b % chars.length];
-  return out;
-}
-
 operativaRoutes.get('/operativa/sorteo', async (c) => {
   const db = dbOf(c);
   const user = c.get('user')!;
@@ -1066,7 +1043,7 @@ operativaRoutes.get('/operativa/sorteo', async (c) => {
         <td style="${TD}">${escapeHtml(r.holderAddress ?? '—')}</td>
         <td style="${TD}">${escapeHtml(r.holderPhone ?? '—')}</td>
         <td style="${TD}">${fmtMoment(r.issuedAt)}</td>
-        <td style="${TD}">${r.winning ? `<span class="pill">Ganador</span>${r.drawnAt ? ` <span class="muted">${fmtMoment(r.drawnAt)}</span>` : ''}` : '<span class="muted">Emitido</span>'}</td>
+        <td style="${TD}">${r.winning ? `<span class="pill">Ganador</span>${r.drawnAt ? ` <span class="muted">${fmtMoment(r.drawnAt)}</span>` : ''}` : '<span class="muted">Inscripto</span>'}</td>
         <td style="${TD}">
           <details style="display:inline">
             <summary style="cursor:pointer;font-size:0.85rem">Editá</summary>
@@ -1074,9 +1051,9 @@ operativaRoutes.get('/operativa/sorteo', async (c) => {
               <label for="sn-${r.id}">Nombre del consumidor</label>
               <input id="sn-${r.id}" name="nombre" type="text" required value="${escapeHtml(r.holderName)}">
               <label for="sdi-${r.id}">DNI</label>
-              <input id="sdi-${r.id}" name="dni" type="text" required value="${escapeHtml(r.holderDni ?? '')}">
+              <input id="sdi-${r.id}" name="dni" type="text" value="${escapeHtml(r.holderDni ?? '')}">
               <label for="sdir-${r.id}">Dirección</label>
-              <input id="sdir-${r.id}" name="direccion" type="text" required value="${escapeHtml(r.holderAddress ?? '')}">
+              <input id="sdir-${r.id}" name="direccion" type="text" value="${escapeHtml(r.holderAddress ?? '')}">
               <label for="sp-${r.id}">Teléfono</label>
               <input id="sp-${r.id}" name="telefono" type="text" value="${escapeHtml(r.holderPhone ?? '')}">
               <label for="se-${r.id}">Email</label>
@@ -1099,12 +1076,11 @@ operativaRoutes.get('/operativa/sorteo', async (c) => {
 
   return render(
     c,
-    'Cupón de sorteo',
+    'Sorteo',
     `<div class="card">
-      <h1>Cupón de sorteo</h1>
-      <p class="muted">Los códigos se generan en el servidor y son únicos. Emitidos: ${rows.length} · Ganadores: ${ganadores}.</p>
+      <h1>Sorteo</h1>
+      <p class="muted">Cada persona que se registra en la tienda queda inscripta automáticamente con un código único. Inscriptos: ${rows.length} · Ganadores: ${ganadores}.</p>
       ${filterBar('/operativa/sorteo', '', storesHtml)}
-      <a class="btn" href="/operativa/sorteo/nuevo">Emití cupones</a>
       <table class="papel" style="margin-top:0.75rem">
         <thead><tr>
           <th style="${TH}">Código</th>
@@ -1112,148 +1088,36 @@ operativaRoutes.get('/operativa/sorteo', async (c) => {
           <th style="${TH}">DNI</th>
           <th style="${TH}">Dirección</th>
           <th style="${TH}">Teléfono</th>
-          <th style="${TH}">Emitido</th>
+          <th style="${TH}">Inscripto</th>
           <th style="${TH}">Estado</th>
           <th style="${TH}">Acciones</th>
         </tr></thead>
         <tbody>${bodyRows || `<tr><td colspan="8" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
       </table>
     </div>`,
-    { notice: aviso(c, 'Operación sobre cupones realizada.') },
+    { notice: aviso(c, 'Sorteo actualizado.') },
   );
-});
-
-operativaRoutes.get('/operativa/sorteo/nuevo', async (c) => {
-  const db = dbOf(c);
-  const user = c.get('user')!;
-  const access = await resolveStore(c, db, c.req.query('tienda'));
-  if ('error' in access) return denied(c, access.error);
-  const storesHtml = await storeOptions(db, access.storeId);
-  return render(
-    c,
-    'Emitir cupones',
-    `<div class="card">
-      <h1>Emitir cupones de sorteo</h1>
-      <form method="post" action="/operativa/sorteo">
-        <label for="tienda">Tienda</label>
-        <select id="tienda" name="tienda">${storesHtml}</select>
-        <label for="cantidad">Cantidad de cupones (1 a 50)</label>
-        <input id="cantidad" name="cantidad" type="number" step="1" min="1" max="50" value="1" required>
-        <label for="nombre">Nombre del consumidor</label>
-        <input id="nombre" name="nombre" type="text" required minlength="2">
-        <label for="dni">DNI</label>
-        <input id="dni" name="dni" type="text" required placeholder="Ej.: 12345678">
-        <label for="direccion">Dirección</label>
-        <input id="direccion" name="direccion" type="text" required placeholder="Calle, número, ciudad">
-        <label for="email">Email (opcional)</label>
-        <input id="email" name="email" type="text">
-        <label for="telefono">Teléfono (opcional)</label>
-        <input id="telefono" name="telefono" type="text">
-        <label for="notas">Notas (opcional)</label>
-        <input id="notas" name="notas" type="text">
-        <button type="submit">Generá los códigos</button>
-      </form>
-      <p><a href="/operativa/sorteo">Volver al listado</a></p>
-    </div>`,
-  );
-});
-
-operativaRoutes.post('/operativa/sorteo', async (c) => {
-  const db = dbOf(c);
-  const body = await c.req.parseBody();
-  const access = await resolveStore(c, db, body.tienda);
-  if ('error' in access) return denied(c, access.error);
-  const cantidad = qtyFrom(body.cantidad);
-  if (cantidad === null || cantidad < 1 || cantidad > 50) {
-    return fail(
-      c,
-      'Cupón de sorteo',
-      'La cantidad de cupones debe estar entre 1 y 50.',
-      '/operativa/sorteo/nuevo',
-    );
-  }
-  const nombre = str(body.nombre);
-  if (nombre.length < 2) {
-    return fail(
-      c,
-      'Cupón de sorteo',
-      'Ingresá el nombre del consumidor.',
-      '/operativa/sorteo/nuevo',
-    );
-  }
-  const dni = str(body.dni);
-  if (dni.length < 7) {
-    return fail(
-      c,
-      'Cupón de sorteo',
-      'Ingresá un DNI válido (mínimo 7 dígitos).',
-      '/operativa/sorteo/nuevo',
-    );
-  }
-  const direccion = str(body.direccion);
-  if (direccion.length < 5) {
-    return fail(
-      c,
-      'Cupón de sorteo',
-      'Ingresá la dirección del consumidor.',
-      '/operativa/sorteo/nuevo',
-    );
-  }
-  const email = str(body.email);
-  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return fail(
-      c,
-      'Cupón de sorteo',
-      'Ingresá un email válido o dejalo vacío.',
-      '/operativa/sorteo/nuevo',
-    );
-  }
-  const telefono = str(body.telefono);
-  const notas = str(body.notas);
-  const codes = new Set<string>();
-  while (codes.size < cantidad) {
-    const code = randomRaffleCode();
-    const exists = await db
-      .select({ code: raffleCoupons.code })
-      .from(raffleCoupons)
-      .where(eq(raffleCoupons.code, code))
-      .limit(1);
-    if (!exists[0]) codes.add(code);
-  }
-  await db.insert(raffleCoupons).values(
-    [...codes].map((code) => ({
-      code,
-      storeId: access.storeId,
-      holderName: nombre,
-      holderDni: dni,
-      holderAddress: direccion,
-      holderEmail: email || null,
-      holderPhone: telefono || null,
-      notes: notas || null,
-    })),
-  );
-  return c.redirect('/operativa/sorteo?aviso=1');
 });
 
 operativaRoutes.post('/operativa/sorteo/:id/ganador', async (c) => {
   const db = dbOf(c);
   const user = c.get('user')!;
   const id = idFrom(c.req.param('id'));
-  if (!id) return notFound(c, 'Cupón de sorteo', '/operativa/sorteo');
+  if (!id) return notFound(c, 'Sorteo', '/operativa/sorteo');
   const rows = await db
     .select()
     .from(raffleCoupons)
     .where(eq(raffleCoupons.id, id))
     .limit(1);
   const row = rows[0];
-  if (!row) return notFound(c, 'Cupón de sorteo', '/operativa/sorteo');
+  if (!row) return notFound(c, 'Sorteo', '/operativa/sorteo');
   if (!(await canManageStore(db, user, row.storeId))) {
     return denied(c, 'No tenés permiso sobre la tienda de ese cupón.');
   }
   if (row.winning) {
     return fail(
       c,
-      'Cupón de sorteo',
+      'Sorteo',
       'Este cupón ya estaba marcado como ganador.',
       '/operativa/sorteo',
     );
@@ -1269,14 +1133,14 @@ operativaRoutes.post('/operativa/sorteo/:id/editar', async (c) => {
   const db = dbOf(c);
   const user = c.get('user')!;
   const id = idFrom(c.req.param('id'));
-  if (!id) return notFound(c, 'Cupón de sorteo', '/operativa/sorteo');
+  if (!id) return notFound(c, 'Sorteo', '/operativa/sorteo');
   const rows = await db
     .select()
     .from(raffleCoupons)
     .where(eq(raffleCoupons.id, id))
     .limit(1);
   const row = rows[0];
-  if (!row) return notFound(c, 'Cupón de sorteo', '/operativa/sorteo');
+  if (!row) return notFound(c, 'Sorteo', '/operativa/sorteo');
   if (!(await canManageStore(db, user, row.storeId))) {
     return denied(c, 'No tenés permiso sobre la tienda de ese cupón.');
   }
@@ -1285,7 +1149,7 @@ operativaRoutes.post('/operativa/sorteo/:id/editar', async (c) => {
   if (nombre.length < 2) {
     return fail(
       c,
-      'Cupón de sorteo',
+      'Sorteo',
       'Ingresá el nombre de quien recibe el cupón.',
       '/operativa/sorteo',
     );
@@ -1294,7 +1158,7 @@ operativaRoutes.post('/operativa/sorteo/:id/editar', async (c) => {
   if (dni.length < 7) {
     return fail(
       c,
-      'Cupón de sorteo',
+      'Sorteo',
       'Ingresá un DNI válido (mínimo 7 dígitos).',
       '/operativa/sorteo',
     );
@@ -1303,7 +1167,7 @@ operativaRoutes.post('/operativa/sorteo/:id/editar', async (c) => {
   if (direccion.length < 5) {
     return fail(
       c,
-      'Cupón de sorteo',
+      'Sorteo',
       'Ingresá la dirección del consumidor.',
       '/operativa/sorteo',
     );
@@ -1312,7 +1176,7 @@ operativaRoutes.post('/operativa/sorteo/:id/editar', async (c) => {
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return fail(
       c,
-      'Cupón de sorteo',
+      'Sorteo',
       'Ingresá un email válido o dejalo vacío.',
       '/operativa/sorteo',
     );
@@ -1977,7 +1841,7 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
   const fechaInput = dateInput(selected);
 
   // Get all data for the day
-  const [activities, shiftReportsData, cash, lubricantes] = await Promise.all([
+  const [activities, shiftReportsData, cash] = await Promise.all([
     db
       .select()
       .from(dailyActivities)
@@ -2010,18 +1874,6 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
           lt(cashDays.reportDate, nextDay(selected)),
         ),
       )
-      .limit(1),
-    db
-      .select()
-      .from(lubricantStocks)
-      .where(
-        and(
-          eq(lubricantStocks.storeId, access.storeId),
-          gte(lubricantStocks.reportDate, selected),
-          lt(lubricantStocks.reportDate, nextDay(selected)),
-        ),
-      )
-      .orderBy(desc(lubricantStocks.reportDate), desc(lubricantStocks.id))
       .limit(1),
   ]);
 
@@ -2339,437 +2191,6 @@ operativaRoutes.post('/operativa/resumen-diario/facturacion', requireRole('admin
     });
   }
   return c.redirect(`/operativa/resumen-diario?fecha=${dateInput(fecha)}&aviso=1`);
-});
-
-operativaRoutes.get('/operativa/lubricantes', async (c) => {
-  const db = dbOf(c);
-  const user = c.get('user')!;
-  const access = await resolveStore(c, db, c.req.query('tienda'));
-  if ('error' in access) return denied(c, access.error);
-  const fecha = str(c.req.query('fecha'));
-  const day = fecha ? dayStart(fecha) : null;
-  if (fecha && !day) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      'Ingresá una fecha válida.',
-      '/operativa/lubricantes',
-    );
-  }
-  const rows = await db
-    .select()
-    .from(lubricantStocks)
-    .where(
-      and(
-        eq(lubricantStocks.storeId, access.storeId),
-        ...(day
-          ? [
-              gte(lubricantStocks.reportDate, day),
-              lt(lubricantStocks.reportDate, nextDay(day)),
-            ]
-          : []),
-      ),
-    )
-    .orderBy(desc(lubricantStocks.reportDate), desc(lubricantStocks.id))
-    .limit(50);
-
-  const bodyRows = rows
-    .map(
-      (r) => `<tr>
-        <td style="${TD}">${fmtDay(r.reportDate)}</td>
-        <td style="${TD}">${escapeHtml(r.brand)}</td>
-        <td style="${TD}">${escapeHtml(r.grade)}</td>
-        <td style="${TD}">${r.containerL} L</td>
-        <td style="${TD}">${r.openingQty}</td>
-        <td style="${TD}">${r.recibidosQty}</td>
-        <td style="${TD}">${r.vendidosQty}</td>
-        <td style="${TD}">${r.entregadosQty}</td>
-        <td style="${TD}">${r.entriesQty}</td>
-        <td style="${TD}">${r.exitsQty}</td>
-        <td style="${TD}"><strong>${r.closingQty}</strong></td>
-        <td style="${TD}">${formatArs(r.unitPriceCents)}</td>
-        <td style="${TD}">
-          <details style="display:inline">
-            <summary style="cursor:pointer;font-size:0.85rem">Editá</summary>
-            <form method="post" action="/operativa/lubricantes/${r.id}/editar" style="min-width:14rem">
-              <label for="lmar-${r.id}">Marca</label>
-              <input id="lmar-${r.id}" name="marca" type="text" required value="${escapeHtml(r.brand)}">
-              <label for="lgra-${r.id}">Viscosidad</label>
-              <input id="lgra-${r.id}" name="grado" type="text" required value="${escapeHtml(r.grade)}">
-              <label for="lenv-${r.id}">Envase (litros)</label>
-              <input id="lenv-${r.id}" name="envase_l" type="number" step="0.001" min="0" required value="${r.containerL}">
-              <label for="lap-${r.id}">Apertura</label>
-              <input id="lap-${r.id}" name="apertura" type="number" step="1" min="0" required value="${r.openingQty}">
-              <label for="lrec-${r.id}">Recibidos</label>
-              <input id="lrec-${r.id}" name="recibidos" type="number" step="1" min="0" value="${r.recibidosQty}">
-              <label for="lven-${r.id}">Vendidos</label>
-              <input id="lven-${r.id}" name="vendidos" type="number" step="1" min="0" value="${r.vendidosQty}">
-              <label for="lenr-${r.id}">Entregados</label>
-              <input id="lenr-${r.id}" name="entregados" type="number" step="1" min="0" value="${r.entregadosQty}">
-              <label for="len-${r.id}">Entradas</label>
-              <input id="len-${r.id}" name="entradas" type="number" step="1" min="0" required value="${r.entriesQty}">
-              <label for="lsa-${r.id}">Salidas</label>
-              <input id="lsa-${r.id}" name="salidas" type="number" step="1" min="0" required value="${r.exitsQty}">
-              <label for="lpre-${r.id}">Precio unitario (pesos)</label>
-              <input id="lpre-${r.id}" name="precio" type="number" step="0.01" min="0" required value="${(r.unitPriceCents / 100).toFixed(2)}">
-              <button type="submit" style="${SMALL_BTN}">Guardá</button>
-            </form>
-          </details>
-        </td>
-      </tr>`,
-    )
-    .join('');
-
-  const storesHtml = await storeOptions(db, access.storeId);
-
-  return render(
-    c,
-    'Stock de lubricantes',
-    `<div class="card">
-      <h1>Stock de lubricantes</h1>
-      <p class="muted">Cierre = apertura + recibidos + entradas − vendidos − entregados − salidas.</p>
-      ${filterBar('/operativa/lubricantes', fecha, storesHtml)}
-      <a class="btn" href="/operativa/lubricantes/nuevo">Cargá un recuento</a>
-      <table class="papel" style="margin-top:0.75rem">
-        <thead><tr>
-          <th style="${TH}">Fecha</th>
-          <th style="${TH}">Marca</th>
-          <th style="${TH}">Grado</th>
-          <th style="${TH}">Envase</th>
-          <th style="${TH}">Apertura</th>
-          <th style="${TH}">Recibidos</th>
-          <th style="${TH}">Vendidos</th>
-          <th style="${TH}">Entregados</th>
-          <th style="${TH}">Entradas</th>
-          <th style="${TH}">Salidas</th>
-          <th style="${TH}">Cierre</th>
-          <th style="${TH}">Precio unit.</th>
-          <th style="${TH}">Acciones</th>
-        </tr></thead>
-        <tbody>${bodyRows || `<tr><td colspan="13" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
-      </table>
-    </div>`,
-    { notice: aviso(c, 'Stock guardado.') },
-  );
-});
-
-operativaRoutes.get('/operativa/lubricantes/nuevo', async (c) => {
-  const db = dbOf(c);
-  const user = c.get('user')!;
-  const access = await resolveStore(c, db, c.req.query('tienda'));
-  if ('error' in access) return denied(c, access.error);
-  const storesHtml = await storeOptions(db, access.storeId);
-  const catalog = await db
-    .select({ id: products.id, name: products.name, priceCents: products.priceCents })
-    .from(products)
-    .where(eq(products.active, true))
-    .orderBy(asc(products.name))
-    .limit(100);
-  const productOptions =
-    `<option value="">Sin vincular a un producto</option>` +
-    catalog
-      .map(
-        (p) =>
-          `<option value="${p.id}">${escapeHtml(p.name)}</option>`,
-      )
-      .join('');
-  const productPrices = JSON.stringify(
-    Object.fromEntries(catalog.map((p) => [String(p.id), p.priceCents / 100])),
-  );
-  return render(
-    c,
-    'Nuevo recuento de lubricantes',
-    `<div class="card">
-      <h1>Stock de lubricantes</h1>
-      <form method="post" action="/operativa/lubricantes">
-        <label for="tienda">Tienda</label>
-        <select id="tienda" name="tienda">${storesHtml}</select>
-        <label for="fecha">Fecha del conteo</label>
-        <input id="fecha" name="fecha" type="date" required value="${todayInput()}">
-        <label for="producto">Vincular a un producto de la tienda (opcional)</label>
-        <select id="producto" name="producto">${productOptions}</select>
-        <label for="marca">Marca</label>
-        <input id="marca" name="marca" type="text" required placeholder="Ej.: YPF">
-        <label for="grado">Viscosidad</label>
-        <input id="grado" name="grado" type="text" required placeholder="Ej.: 5W30">
-        <label for="envase_l">Envase (litros)</label>
-        <input id="envase_l" name="envase_l" type="number" step="0.001" min="0" required placeholder="Ej.: 1">
-        <label for="apertura">Stock de apertura (unidades)</label>
-        <input id="apertura" name="apertura" type="number" step="1" min="0" value="0" required>
-        <label for="recibidos">Recibidos (unidades)</label>
-        <input id="recibidos" name="recibidos" type="number" step="1" min="0" value="0" required>
-        <label for="vendidos">Vendidos (unidades)</label>
-        <input id="vendidos" name="vendidos" type="number" step="1" min="0" value="0" required>
-        <label for="entregados">Entregados (unidades)</label>
-        <input id="entregados" name="entregados" type="number" step="1" min="0" value="0" required>
-        <label for="salidas">Salidas (unidades)</label>
-        <input id="salidas" name="salidas" type="number" step="1" min="0" value="0" required>
-        <label for="precio">Precio unitario (pesos)</label>
-        <input id="precio" name="precio" type="number" step="0.01" min="0" value="0" required>
-        <p class="muted">El stock de cierre se calcula: apertura + recibidos + entradas − vendidos − entregados − salidas.</p>
-        <button type="submit">Guardá el recuento</button>
-      </form>
-      <p><a href="/operativa/lubricantes">Volver al listado</a></p>
-    </div>
-    <script>
-      (function(){
-        const precios = ${productPrices};
-        const prod = document.getElementById('producto');
-        const precio = document.getElementById('precio');
-        if (prod && precio) {
-          prod.addEventListener('change', function(){
-            const p = precios[prod.value];
-            if (p !== undefined) precio.value = Number(p).toFixed(2);
-          });
-        }
-      })();
-    </script>`,
-  );
-});
-
-operativaRoutes.post('/operativa/lubricantes', async (c) => {
-  const db = dbOf(c);
-  const body = await c.req.parseBody();
-  const access = await resolveStore(c, db, body.tienda);
-  if ('error' in access) return denied(c, access.error);
-  const fecha = dayStart(str(body.fecha));
-  if (!fecha) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      'Ingresá una fecha válida (AAAA-MM-DD).',
-      '/operativa/lubricantes/nuevo',
-    );
-  }
-  const marca = str(body.marca);
-  if (!marca) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      'Ingresá la marca del lubricante.',
-      '/operativa/lubricantes/nuevo',
-    );
-  }
-  const grado = str(body.grado);
-  if (!grado) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      'Ingresá la viscosidad del lubricante.',
-      '/operativa/lubricantes/nuevo',
-    );
-  }
-  const envase = floatFrom(body.envase_l);
-  if (envase === null || envase <= 0) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      'Ingresá el tamaño del envase en litros (mayor a 0).',
-      '/operativa/lubricantes/nuevo',
-    );
-  }
-  const apertura = qtyFrom(body.apertura);
-  const entradas = qtyFrom(body.entradas);
-  const salidas = qtyFrom(body.salidas);
-  const recibidos = qtyFrom(body.recibidos) ?? 0;
-  const vendidos = qtyFrom(body.vendidos) ?? 0;
-  const entregados = qtyFrom(body.entregados) ?? 0;
-  if (apertura === null) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      'La apertura de stock no es un número válido.',
-      '/operativa/lubricantes/nuevo',
-    );
-  }
-  if (entradas === null) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      'Las entradas de stock no son un número válido.',
-      '/operativa/lubricantes/nuevo',
-    );
-  }
-  if (salidas === null) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      'Las salidas de stock no son un número válido.',
-      '/operativa/lubricantes/nuevo',
-    );
-  }
-  const cierre = apertura + recibidos + entradas - vendidos - entregados - salidas;
-  if (cierre < 0) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      `El cierre quedaría en ${cierre}: las salidas superan la apertura más las entradas.`,
-      '/operativa/lubricantes/nuevo',
-    );
-  }
-  const precio = centsOr0(body.precio);
-  if (precio === null) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      'El precio unitario no es un monto válido en pesos.',
-      '/operativa/lubricantes/nuevo',
-    );
-  }
-  const productoId = idFrom(body.producto);
-  if (body.producto !== undefined && str(body.producto) !== '' && !productoId) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      'Seleccioná un producto válido.',
-      '/operativa/lubricantes/nuevo',
-    );
-  }
-  if (productoId) {
-    const prows = await db
-      .select({ id: products.id })
-      .from(products)
-      .where(eq(products.id, productoId))
-      .limit(1);
-    if (!prows[0]) {
-      return fail(
-        c,
-        'Stock de lubricantes',
-        'Ese producto no existe.',
-        '/operativa/lubricantes/nuevo',
-      );
-    }
-  }
-  await db.insert(lubricantStocks).values({
-    storeId: access.storeId,
-    reportDate: fecha,
-    productId: productoId,
-    brand: marca,
-    grade: grado,
-    containerL: envase,
-    openingQty: apertura,
-    entriesQty: entradas,
-    exitsQty: salidas,
-    closingQty: cierre,
-    unitPriceCents: precio,
-    recibidosQty: recibidos,
-    vendidosQty: vendidos,
-    entregadosQty: entregados,
-  });
-  return c.redirect('/operativa/lubricantes?aviso=1');
-});
-
-operativaRoutes.post('/operativa/lubricantes/:id/editar', async (c) => {
-  const db = dbOf(c);
-  const user = c.get('user')!;
-  const id = idFrom(c.req.param('id'));
-  if (!id) return notFound(c, 'Stock de lubricantes', '/operativa/lubricantes');
-  const rows = await db
-    .select()
-    .from(lubricantStocks)
-    .where(eq(lubricantStocks.id, id))
-    .limit(1);
-  const row = rows[0];
-  if (!row) {
-    return notFound(c, 'Stock de lubricantes', '/operativa/lubricantes');
-  }
-  if (!(await canManageStore(db, user, row.storeId))) {
-    return denied(c, 'No tenés permiso sobre la tienda de ese recuento.');
-  }
-  const body = await c.req.parseBody();
-  const marca = str(body.marca);
-  if (!marca) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      'Ingresá la marca del lubricante.',
-      '/operativa/lubricantes',
-    );
-  }
-  const grado = str(body.grado);
-  if (!grado) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      'Ingresá la viscosidad del lubricante.',
-      '/operativa/lubricantes',
-    );
-  }
-  const envase = floatFrom(body.envase_l);
-  if (envase === null || envase <= 0) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      'Ingresá el tamaño del envase en litros (mayor a 0).',
-      '/operativa/lubricantes',
-    );
-  }
-  const apertura = qtyFrom(body.apertura);
-  const entradas = qtyFrom(body.entradas);
-  const salidas = qtyFrom(body.salidas);
-  if (apertura === null) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      'La apertura de stock no es un número válido.',
-      '/operativa/lubricantes',
-    );
-  }
-  if (entradas === null) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      'Las entradas de stock no son un número válido.',
-      '/operativa/lubricantes',
-    );
-  }
-  if (salidas === null) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      'Las salidas de stock no son un número válido.',
-      '/operativa/lubricantes',
-    );
-  }
-  const recibidos = qtyFrom(body.recibidos) ?? 0;
-  const vendidos = qtyFrom(body.vendidos) ?? 0;
-  const entregados = qtyFrom(body.entregados) ?? 0;
-  const cierre = apertura + recibidos + entradas - vendidos - entregados - salidas;
-  if (cierre < 0) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      `El cierre quedaría en ${cierre}: las salidas superan la apertura más las entradas.`,
-      '/operativa/lubricantes',
-    );
-  }
-  const precio = centsOr0(body.precio);
-  if (precio === null) {
-    return fail(
-      c,
-      'Stock de lubricantes',
-      'El precio unitario no es un monto válido en pesos.',
-      '/operativa/lubricantes',
-    );
-  }
-  await db
-    .update(lubricantStocks)
-    .set({
-      brand: marca,
-      grade: grado,
-      containerL: envase,
-      openingQty: apertura,
-      entriesQty: entradas,
-      exitsQty: salidas,
-      closingQty: cierre,
-      unitPriceCents: precio,
-      recibidosQty: recibidos,
-      vendidosQty: vendidos,
-      entregadosQty: entregados,
-      updatedAt: new Date(),
-    })
-    .where(eq(lubricantStocks.id, id));
-  return c.redirect('/operativa/lubricantes?aviso=1');
 });
 
 type ReadingInput = {

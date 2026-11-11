@@ -598,45 +598,6 @@ export const dailyActivities = sqliteTable(
   }),
 );
 
-export const lubricantStocks = sqliteTable(
-  'lubricant_stocks',
-  {
-    id: integer('id').primaryKey({ autoIncrement: true }),
-    storeId: integer('store_id')
-      .notNull()
-      .references(() => stores.id, { onDelete: 'cascade' }),
-    reportDate: integer('report_date', { mode: 'timestamp_ms' }).notNull(),
-    productId: integer('product_id').references(() => products.id, {
-      onDelete: 'set null',
-    }),
-    brand: text('brand').notNull(),
-    grade: text('grade').notNull(),
-    containerL: real('container_l').notNull(),
-    openingQty: integer('opening_qty').notNull().default(0),
-    entriesQty: integer('entries_qty').notNull().default(0),
-    exitsQty: integer('exits_qty').notNull().default(0),
-    closingQty: integer('closing_qty').notNull().default(0),
-    unitPriceCents: integer('unit_price_cents').notNull().default(0),
-    recibidosQty: integer('recibidos_qty').notNull().default(0),
-    vendidosQty: integer('vendidos_qty').notNull().default(0),
-    entregadosQty: integer('entregados_qty').notNull().default(0),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (t) => ({
-    storeIdx: index('lubricant_stocks_store_idx').on(t.storeId, t.reportDate),
-    containerChk: check('lubricant_stocks_container_chk', sql`container_l > 0`),
-    qtyChk: check(
-      'lubricant_stocks_qty_chk',
-      sql`opening_qty >= 0 and entries_qty >= 0 and exits_qty >= 0 and closing_qty >= 0 and recibidos_qty >= 0 and vendidos_qty >= 0 and entregados_qty >= 0`,
-    ),
-    priceChk: check(
-      'lubricant_stocks_price_chk',
-      sql`unit_price_cents >= 0`,
-    ),
-  }),
-);
-
 export const shiftReports = sqliteTable(
   'shift_reports',
   {

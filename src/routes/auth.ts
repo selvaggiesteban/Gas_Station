@@ -18,6 +18,7 @@ import {
 import { page, escapeHtml } from '../lib/html';
 import { sendEmail } from '../lib/email';
 import { awardLoginPoints } from '../services/points';
+import { enrollInRaffle } from '../services/raffle';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -188,10 +189,14 @@ authRoutes.post('/registro', async (c) => {
     userAgent: c.req.header('user-agent') ?? null,
   });
   setSessionCookie(c, token);
+  // Registro = participación automática en el sorteo.
+  const raffleCode = await enrollInRaffle(db, { name: nombre, email });
   await sendEmail({
     to: email,
     subject: 'Bienvenido a Gas Station',
-    text: `Hola ${nombre}, tu cuenta fue creada correctamente.`,
+    text: `Hola ${nombre}, tu cuenta fue creada correctamente.${
+      raffleCode ? ` Tu cupón del sorteo es ${raffleCode}.` : ''
+    }`,
   });
   return c.redirect('/app');
 });

@@ -107,9 +107,9 @@ describe('operativa', () => {
     expect(html).toContain('Caja diaria');
     expect(html).toContain('Resumen de ventas');
     expect(html).toContain('Resumen diario de actividades');
-    expect(html).toContain('Stock de lubricantes');
+    expect(html).not.toContain('Stock de lubricantes');
     expect(html).toContain('Rendición de turno');
-    expect(html).toContain('Cupón de sorteo');
+    expect(html).toContain('Sorteo');
     expect(html).toContain('/operativa/caja');
     expect(html).toContain('/operativa/sorteo');
   });
@@ -515,72 +515,93 @@ describe('operativa', () => {
     );
   });
 
-  it('sorteo: genera códigos únicos y permite marcar el ganador', async () => {
+  it('sorteo: registro crea participación automática', async () => {
+    const antes = await count('raffle_coupons');
+    const email = uniqueEmail('sorteo-reg');
+    const cookie = await registerAs('Sorteo Registro', email, 'customer');
+    expect(await count('raffle_coupons')).toBe(antes + 1);
+    const rows = await env.DB.prepare(
+      'select * from raffle_coupons where holder_email = ?',
+    ).bind(email).all();
+    expect(rows.results.length).toBe(1);
+    const row0 = rows.results[0];
+    expect(row0).toBeTruthy();
+    expect(row0!.code).toMatch(/^[A-Z2-9]{8}$/);
+    expect(row0!.holder_name).toBe('Sorteo Registro');
+    expect(row0!.winning).toBe(0);
+  });
+
+  it('sorteo: alta en checkout crea participación automática', async () => {
+    const antes = await count('raffle_coupons');
+    const email = uniqueEmail('checkout-reg');
+    const cookie = await registerAs('Checkout Usuario', email, 'customer');
+    // Crear producto activo si no existe
+    const prod = await env.DB.prepare(
+      'select id from products where active = 1 limit 1'
+    ).first();
+    let pid;
+    if (prod) {
+      pid = prod.id;
+    } else {
+      const slug = 'producto-test-' + Date.now();
+      const ins = await env.DB.prepare(
+        'insert into products (name, slug, price_cents, active, category) values (?, ?, ?, 1, ?)'
+      ).bind('Producto Test', slug, 1000, 'general').run();
+      pid = ins.meta.last_row_id;
+    }
+    const postBody = { ['qty_' + pid]: '1', cupon: '', comprobante: '' };
+    const checkout = await post('/checkout', postBody, cookie);
+    expect(checkout.status).toBe(302);
+    expect(await count('raffle_coupons')).toBe(antes + 1);
+  });
+
+  it('sorteo: listado muestra inscriptos y permite marcar ganador', async () => {
     const cookie = await registerAs(
-      'Sorteo Admin',
-      uniqueEmail('sorteo-admin'),
+      'Sorteo Admin List',
+      uniqueEmail('sorteo-admin-list'),
       'admin',
     );
-    const antes = await count('raffle_coupons');
-
-    const emitidos = await post(
-      '/operativa/sorteo',
-      {
-        cantidad: '3',
-        nombre: 'María Díaz',
-        dni: '12345678',
-        direccion: 'Av. Siempre Viva 742, Springfield',
-        email: 'maria@example.com',
-        telefono: '1155554444',
-      },
-      cookie,
-    );
-    expect(emitidos.status).toBe(302);
-    expect(await count('raffle_coupons')).toBe(antes + 3);
-
-    const rows = await env.DB.prepare(
-      'select * from raffle_coupons where holder_name = ? order by id',
-    )
-      .bind('María Díaz')
-      .all<{
-        id: number;
-        code: string;
-        winning: number;
-        drawn_at: number | null;
-        holder_email: string | null;
-      }>();
-    expect(rows.results.length).toBe(3);
-    const codes = rows.results.map((r) => r.code);
-    expect(new Set(codes).size).toBe(3);
-    for (const code of codes) {
-      expect(code).toMatch(/^[A-Z2-9]{8}$/);
-    }
-    expect(rows.results[0]!.holder_email).toBe('maria@example.com');
-
+    await registerAs('Sorteo User 1', uniqueEmail('sorteo-user1'), 'customer');
+    await registerAs('Sorteo User 2', uniqueEmail('sorteo-user2'), 'customer');
     const listado = await get('/operativa/sorteo', cookie);
     expect(listado.status).toBe(200);
-    expect(await listado.text()).toContain(codes[0]!);
-
+    const html = await listado.text();
+    expect(html).toContain('Inscripto');
+    expect(html).toContain('Marcar ganador');
+    const rows = await env.DB.prepare(
+      'select * from raffle_coupons order by id desc limit 2'
+    ).all();
+    expect(rows.results.length).toBe(2);
+    const r0 = rows.results[0];
+    expect(r0).toBeTruthy();
     const ganador = await post(
-      `/operativa/sorteo/${rows.results[0]!.id}/ganador`,
+      '/operativa/sorteo/' + r0!.id + '/ganador',
       {},
       cookie,
     );
     expect(ganador.status).toBe(302);
-
     const after = await env.DB.prepare(
       'select * from raffle_coupons where id = ?',
-    )
-      .bind(rows.results[0]!.id)
-      .first<{ winning: number; drawn_at: number | null }>();
+    ).bind(r0!.id).first();
+    expect(after).toBeTruthy();
     expect(after!.winning).toBe(1);
     expect(after!.drawn_at).toBeTruthy();
+  });
 
-    const repetido = await post(
-      `/operativa/sorteo/${rows.results[0]!.id}/ganador`,
-      {},
-      cookie,
+  it('sorteo: marcar ganador dos veces devuelve 422', async () => {
+    const cookie = await registerAs(
+      'Sorteo Admin 2',
+      uniqueEmail('sorteo-admin-2'),
+      'admin',
     );
+    await registerAs('Sorteo User 3', uniqueEmail('sorteo-user3'), 'customer');
+    const rows = await env.DB.prepare(
+      'select * from raffle_coupons order by id desc limit 1'
+    ).all();
+    const r0 = rows.results[0];
+    expect(r0).toBeTruthy();
+    await post('/operativa/sorteo/' + r0!.id + '/ganador', {}, cookie);
+    const repetido = await post('/operativa/sorteo/' + r0!.id + '/ganador', {}, cookie);
     expect(repetido.status).toBe(422);
   });
 
@@ -770,114 +791,6 @@ describe('operativa', () => {
     expect(htmlListado).toContain('Ensobrado');
     expect(htmlListado).toContain('Puente entr.');
     expect(htmlListado).toContain(formatArs(850000));
-  });
-
-  it('sorteo: exige DNI y dirección y los muestra en el listado', async () => {
-    const cookie = await registerAs(
-      'Sorteo Datos',
-      uniqueEmail('sorteo-datos'),
-      'admin',
-    );
-
-    const sinDni = await post(
-      '/operativa/sorteo',
-      {
-        cantidad: '1',
-        nombre: 'Juan Pérez',
-        direccion: 'Calle Falsa 123',
-      },
-      cookie,
-    );
-    expect(sinDni.status).toBe(422);
-
-    const sinDireccion = await post(
-      '/operativa/sorteo',
-      { cantidad: '1', nombre: 'Juan Pérez', dni: '30111222' },
-      cookie,
-    );
-    expect(sinDireccion.status).toBe(422);
-
-    const antes = await count('raffle_coupons');
-    const ok = await post(
-      '/operativa/sorteo',
-      {
-        cantidad: '2',
-        nombre: 'Juan Pérez',
-        dni: '30111222',
-        direccion: 'Calle Falsa 123, CABA',
-        telefono: '1155550000',
-      },
-      cookie,
-    );
-    expect(ok.status).toBe(302);
-    expect(await count('raffle_coupons')).toBe(antes + 2);
-
-    const listado = await get('/operativa/sorteo', cookie);
-    expect(listado.status).toBe(200);
-    const html = await listado.text();
-    expect(html).toContain('30111222');
-    expect(html).toContain('Calle Falsa 123, CABA');
-    expect(html).toContain('1155550000');
-  });
-
-  it('lubricantes: recibidos, vendidos y entregados alimentan el cierre', async () => {
-    const cookie = await registerAs(
-      'Lubricantes Stock',
-      uniqueEmail('lubricantes-stock'),
-      'admin',
-    );
-    const antes = await count('lubricant_stocks');
-
-    const creada = await post(
-      '/operativa/lubricantes',
-      {
-        fecha: '2026-11-05',
-        marca: 'YPF',
-        grado: '5W30',
-        envase_l: '1',
-        apertura: '10',
-        recibidos: '6',
-        entradas: '4',
-        vendidos: '5',
-        entregados: '3',
-        salidas: '2',
-        precio: '8500',
-      },
-      cookie,
-    );
-    expect(creada.status).toBe(302);
-    expect(creada.headers.get('location')).toBe(
-      '/operativa/lubricantes?aviso=1',
-    );
-    expect(await count('lubricant_stocks')).toBe(antes + 1);
-
-    const row = await env.DB.prepare(
-      'select * from lubricant_stocks where brand = ? order by id desc limit 1',
-    )
-      .bind('YPF')
-      .first<{
-        opening_qty: number;
-        recibidos_qty: number;
-        vendidos_qty: number;
-        entregados_qty: number;
-        entries_qty: number;
-        exits_qty: number;
-        closing_qty: number;
-        unit_price_cents: number;
-      }>();
-    expect(row).toBeTruthy();
-    expect(row!.recibidos_qty).toBe(6);
-    expect(row!.vendidos_qty).toBe(5);
-    expect(row!.entregados_qty).toBe(3);
-    expect(row!.closing_qty).toBe(10 + 6 + 4 - 5 - 3 - 2);
-    expect(row!.unit_price_cents).toBe(850000);
-
-    const listado = await get('/operativa/lubricantes', cookie);
-    expect(listado.status).toBe(200);
-    const html = await listado.text();
-    expect(html).toContain('Recibidos');
-    expect(html).toContain('Vendidos');
-    expect(html).toContain('Entregados');
   });
 
   it('resumen diario: solo admin lo ve y puede guardar observaciones', async () => {

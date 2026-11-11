@@ -195,7 +195,7 @@ The workflow authenticates with the repository secrets `CLOUDFLARE_API_TOKEN` an
 | Identity & access | `users`, `sessions`, `password_reset_tokens`, `avatars` |
 | Commerce | `stores`, `store_user`, `products`, `coupons`, `orders`, `order_items` |
 | Loyalty & engagement | `point_logs`, `weekly_challenges`, `challenge_participations`, `announcements`, `notifications`, `motivational_quotes`, `user_activity`, `raffle_coupons` |
-| Operations | `cash_days`, `cash_lines`, `sales_summaries`, `daily_activities`, `daily_activity_summary`, `lubricant_stocks`, `shift_reports`, `shift_report_readings` |
+| Operations | `cash_days`, `cash_lines`, `sales_summaries`, `daily_activities`, `daily_activity_summary`, `shift_reports`, `shift_report_readings` |
 | Platform | `settings`, `jobs` |
 
 Roles: **`admin`** · **`store_manager`** (gestor) · **`customer`**.

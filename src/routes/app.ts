@@ -20,7 +20,6 @@ import {
   cashDays,
   challengeParticipations,
   dailyActivities,
-  lubricantStocks,
   pointLogs,
   raffleCoupons,
   salesSummaries,
@@ -105,7 +104,7 @@ async function loadOperativaDashboardHtml(db: Db): Promise<string> {
   const today = utcDayStart(new Date());
   const tomorrow = nextDay(today);
 
-  const [cashRows, salesRows, activityRows, shiftRows, lubeRows, raffle] =
+  const [cashRows, salesRows, activityRows, shiftRows, raffle] =
     await Promise.all([
       db
         .select()
@@ -155,12 +154,6 @@ async function loadOperativaDashboardHtml(db: Db): Promise<string> {
         .orderBy(desc(shiftReports.reportDate), desc(shiftReports.id))
         .limit(10),
       db
-        .select()
-        .from(lubricantStocks)
-        .where(eq(lubricantStocks.storeId, storeId))
-        .orderBy(desc(lubricantStocks.reportDate), desc(lubricantStocks.id))
-        .limit(1),
-      db
         .select({
           total: sql<number>`count(*)`,
           winners: sql<number>`coalesce(sum(case when ${raffleCoupons.winning} then 1 else 0 end), 0)`,
@@ -175,7 +168,6 @@ async function loadOperativaDashboardHtml(db: Db): Promise<string> {
   const gncVolume = activityRows.reduce((acc, r) => acc + r.gncVolume, 0);
   const gncSales = activityRows.reduce((acc, r) => acc + r.gncSalesCents, 0);
   const lastShift = shiftRows[0];
-  const lube = lubeRows[0];
   const rafTotal = Number(raffle[0]?.total ?? 0);
   const rafWinners = Number(raffle[0]?.winners ?? 0);
 
@@ -217,15 +209,8 @@ async function loadOperativaDashboardHtml(db: Db): Promise<string> {
         : 'Cargá la rendición del turno.',
     ),
     statTile(
-      'Lubricantes',
-      lube ? `${lube.closingQty} envases` : 'Sin recuentos',
-      lube
-        ? `${escapeHtml(lube.brand)} ${escapeHtml(lube.grade)} · ${DAY_FMT.format(lube.reportDate)}`
-        : 'Hacé el recuento de aceite.',
-    ),
-    statTile(
       'Sorteo',
-      `${rafTotal} emitido(s)`,
+      `${rafTotal} participante(s)`,
       `${rafWinners} ganador(es)`,
     ),
   ].join('');

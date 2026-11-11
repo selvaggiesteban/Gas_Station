@@ -34,6 +34,7 @@ import {
   validateCoupon,
   type CheckoutLine,
 } from '../services/orders';
+import { enrollInRaffle } from '../services/raffle';
 import { orderItems, orders, products, users } from '../db/schema';
 
 export const shopRoutes = new Hono<AppEnv>();
@@ -411,10 +412,18 @@ shopRoutes.post('/checkout', async (c) => {
       role: 'customer',
       points: 0,
     };
+    // Registro = participación automática en el sorteo.
+    const raffleCode = await enrollInRaffle(db, {
+      name: nombre,
+      email,
+      notes: 'Alta automática en el checkout',
+    });
     await sendEmail({
       to: email,
       subject: 'Bienvenido a Gas Station',
-      text: `Hola ${nombre}, tu cuenta fue creada correctamente.`,
+      text: `Hola ${nombre}, tu cuenta fue creada correctamente.${
+        raffleCode ? ` Tu cupón del sorteo es ${raffleCode}.` : ''
+      }`,
     });
   }
 

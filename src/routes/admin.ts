@@ -13,6 +13,7 @@ import {
   ROLE_VALUES,
   announcements,
   cashDays,
+  notifications,
   orderItems,
   orders,
   passwordResetTokens,
@@ -954,6 +955,8 @@ adminRoutes.post('/admin/tienda/productos/:id/editar', async (c) => {
   if (!rows[0]) {
     return render(c, 'Tienda', notFoundBody('/admin/tienda'), { status: 404 });
   }
+  const oldPriceCents = rows[0].priceCents;
+  const oldName = rows[0].name;
   const body = await c.req.parseBody();
   const name = str(body.name);
   const category = str(body.category) || 'general';
@@ -1008,6 +1011,24 @@ adminRoutes.post('/admin/tienda/productos/:id/editar', async (c) => {
     .update(products)
     .set({ name, slug, category, priceCents, stock, description, updatedAt: new Date() })
     .where(eq(products.id, id));
+
+  // Notificar a playeros si cambió el precio
+  if (priceCents !== oldPriceCents) {
+    const playeros = await db
+      .select({ userId: users.id })
+      .from(users)
+      .where(eq(users.role, 'store_manager'));
+    if (playeros.length > 0) {
+      const notifValues = playeros.map((p) => ({
+        userId: p.userId,
+        type: 'price_change',
+        title: 'Cambio de precio',
+        body: 'El producto "' + escapeHtml(name) + '" cambió de ' + formatArs(oldPriceCents) + ' a ' + formatArs(priceCents) + '.',
+        data: JSON.stringify({ productId: id, oldPriceCents, newPriceCents: priceCents }),
+      }));
+      await db.insert(notifications).values(notifValues);
+    }
+  }
 
   if (imageFile) {
     const ext = (imageFile.name.split('.').pop() ?? '').toLowerCase();

@@ -20,6 +20,7 @@ import {
   cashDays,
   challengeParticipations,
   dailyActivities,
+  notifications,
   pointLogs,
   raffleCoupons,
   salesSummaries,
@@ -363,6 +364,29 @@ async function loadAnnouncementsHtml(
   </div>`;
 }
 
+async function loadNotificationsHtml(db: Db, userId: number): Promise<string> {
+  const rows = await db
+    .select()
+    .from(notifications)
+    .where(eq(notifications.userId, userId))
+    .orderBy(desc(notifications.createdAt), desc(notifications.id))
+    .limit(10);
+  if (rows.length === 0) return '';
+  const items = rows
+    .map(
+      (n) => `<div style="border-top:1px solid #e4e4e7;padding:0.6rem 0;opacity:${n.readAt ? '0.6' : '1'}">
+        <strong>${escapeHtml(n.title)}</strong>
+        ${n.body ? `<p class="muted" style="margin:0.25rem 0 0">${escapeHtml(n.body)}</p>` : ''}
+        <p class="muted" style="margin:0.25rem 0 0">${DATE_FMT.format(n.createdAt)} ${n.readAt ? '· <span class="pill">Leído</span>' : ''}</p>
+      </div>`,
+    )
+    .join('');
+  return `<div class="card">
+    <h2>Notificaciones</h2>
+    ${items}
+  </div>`;
+}
+
 async function loadPointLogsHtml(db: Db, userId: number): Promise<string> {
   const logs = await db
     .select()
@@ -440,6 +464,7 @@ appRoutes.get('/app', requireAuth(), async (c) => {
       `${user.role === 'customer' ? PANEL_NAV : ''}${greeting}
       ${canOperativa ? await loadOperativaDashboardHtml(db) : ''}
       ${await loadAnnouncementsHtml(db, user, now)}
+      ${!isAdmin ? await loadNotificationsHtml(db, user.id) : ''}
       ${!isAdmin ? await loadActiveChallenges(db, user, now) : ''}
       ${!isAdmin ? await loadPointLogsHtml(db, user.id) : ''}`,
     ),

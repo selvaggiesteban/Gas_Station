@@ -213,7 +213,7 @@ async function loadOperativaDashboardHtml(db: Db): Promise<string> {
       'Rendición de turno',
       lastShift ? `${shiftRows.length} turno(s)` : 'Sin carga',
       lastShift
-        ? `Último cierre ${formatArs(lastShift.closingCents)}`
+        ? `Último total ${formatArs(lastShift.totalSalesCents)} · Puente sal. ${lastShift.puenteSaliente.toFixed(3)} m³`
         : 'Cargá la rendición del turno.',
     ),
     statTile(

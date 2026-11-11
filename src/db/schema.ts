@@ -651,13 +651,9 @@ export const shiftReports = sqliteTable(
     cashierId: integer('cashier_id').references(() => users.id, {
       onDelete: 'set null',
     }),
-    openingCents: integer('opening_cents').notNull().default(0),
-    closingCents: integer('closing_cents').notNull().default(0),
     gncQty: integer('gnc_qty').notNull().default(0),
     gncPriceCents: integer('gnc_price_cents').notNull().default(0),
     gncSalesCents: integer('gnc_sales_cents').notNull().default(0),
-    lubricantesQty: integer('lubricantes_qty').notNull().default(0),
-    lubricantesPriceCents: integer('lubricantes_price_cents').notNull().default(0),
     lubricantesSalesCents: integer('lubricantes_sales_cents').notNull().default(0),
     variosQty: integer('varios_qty').notNull().default(0),
     variosPriceCents: integer('varios_price_cents').notNull().default(0),
@@ -676,10 +672,8 @@ export const shiftReports = sqliteTable(
     sobre6Hora: text('sobre_6_hora'),
     sobre6ImporteCents: integer('sobre_6_importe_cents').notNull().default(0),
     totalEnsobradoCents: integer('total_ensobrado_cents').notNull().default(0),
-    fondoCambioSalienteCents: integer('fondo_cambio_saliente_cents').notNull().default(0),
-    fondoCambioEntranteCents: integer('fondo_cambio_entrante_cents').notNull().default(0),
-    valesEmpleadosCents: integer('vales_empleados_cents').notNull().default(0),
-    valesAlerta: integer('vales_alerta', { mode: 'boolean' }).notNull().default(true),
+    puenteEntrante: real('puente_entrante').notNull().default(0),
+    puenteSaliente: real('puente_saliente').notNull().default(0),
     observaciones: text('observaciones'),
     notes: text('notes'),
     createdAt: createdAt(),
@@ -698,10 +692,6 @@ export const shiftReports = sqliteTable(
       sql`shift in ('morning','evening','night','adicional')`,
     ),
     windowChk: check('shift_reports_window_chk', sql`shift_end > shift_start`),
-    cashChk: check(
-      'shift_reports_cash_chk',
-      sql`opening_cents >= 0 and closing_cents >= 0`,
-    ),
   }),
 );
 
@@ -713,7 +703,6 @@ export const shiftReportReadings = sqliteTable(
       .notNull()
       .references(() => shiftReports.id, { onDelete: 'cascade' }),
     surtidor: integer('surtidor').notNull(),
-    nozzle: integer('nozzle').notNull(),
     product: text('product', { enum: FUEL_PRODUCT_VALUES }).notNull(),
     openingReading: real('opening_reading').notNull().default(0),
     closingReading: real('closing_reading').notNull().default(0),
@@ -723,18 +712,13 @@ export const shiftReportReadings = sqliteTable(
   },
   (t) => ({
     reportIdx: index('shift_report_readings_report_idx').on(t.reportId),
-    nozzleUq: uniqueIndex('shift_report_readings_nozzle_uq').on(
+    surtidorUq: uniqueIndex('shift_report_readings_surtidor_uq').on(
       t.reportId,
       t.surtidor,
-      t.nozzle,
     ),
     surtidorChk: check(
       'shift_report_readings_surtidor_chk',
-      sql`surtidor between 1 and 6`,
-    ),
-    nozzleChk: check(
-      'shift_report_readings_nozzle_chk',
-      sql`nozzle between 1 and 6`,
+      sql`surtidor between 1 and 3`,
     ),
     productChk: check(
       'shift_report_readings_product_chk',

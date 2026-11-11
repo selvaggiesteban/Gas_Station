@@ -408,7 +408,7 @@ operativaRoutes.get('/operativa', async (c) => {
     ),
     indexCard(
       'Resumen diario de actividades',
-      'Matriz de GNC y revisión de bombas por turno.',
+      'Matriz de GNC y revisión de surtidores por turno.',
       '/operativa/actividades',
       daily[0]
         ? `${fmtDay(daily[0].reportDate)} · Turno ${SHIFT_LABELS[daily[0].shift]} · GNC ${daily[0].gncVolume} m³`
@@ -424,10 +424,10 @@ operativaRoutes.get('/operativa', async (c) => {
     ),
     indexCard(
       'Rendición de turno',
-      'Lecturas de surtidores y cierre de turno.',
+      'Lecturas de surtidores y puente de medición.',
       '/operativa/rendicion',
       shift[0]
-        ? `${fmtDay(shift[0].reportDate)} · Turno ${SHIFT_LABELS[shift[0].shift]} · Cierre ${formatArs(shift[0].closingCents)}`
+        ? `${fmtDay(shift[0].reportDate)} · Turno ${SHIFT_LABELS[shift[0].shift]} · Ventas ${formatArs(shift[0].totalSalesCents)}`
         : NO_DATA,
     ),
     indexCard(
@@ -1785,7 +1785,7 @@ operativaRoutes.get('/operativa/actividades', async (c) => {
           <th style="${TH}">Cierre GNC</th>
           <th style="${TH}">Volumen</th>
           <th style="${TH}">Ventas GNC</th>
-          <th style="${TH}">Revisión bomba</th>
+          <th style="${TH}">Revisión surtidor</th>
           <th style="${TH}">Notas</th>
         </tr></thead>
         <tbody>${bodyRows || `<tr><td colspan="8" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
@@ -1820,7 +1820,7 @@ operativaRoutes.get('/operativa/actividades/nuevo', async (c) => {
         <label for="gnc_ventas">Ventas de GNC (pesos)</label>
         <input id="gnc_ventas" name="gnc_ventas" type="number" step="0.01" min="0" value="0" required>
         <label style="display:flex;gap:0.5rem;align-items:center;font-weight:400">
-          <input type="checkbox" name="revision" value="on" style="width:auto"> Revisión de bombas hecha
+          <input type="checkbox" name="revision" value="on" style="width:auto"> Revisión de surtidores hecha
         </label>
         <label for="notas">Notas (opcional)</label>
         <input id="notas" name="notas" type="text">
@@ -2018,9 +2018,9 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
     const sr = shiftReportsData.find(s => s.shift === shift);
 
     const gncIngreso = act?.gncOpening ?? 0;
-    const gncCierre = act?.gncClosing ?? 0;
     const gncVentasM3 = act?.gncVolume ?? 0;
-    const gncMermasExcedencias = gncCierre - gncIngreso - gncVentasM3;
+    // Merma = diferencia del puente de medición (entrante − saliente) de la rendición
+    const gncMermasExcedencias = sr ? sr.puenteEntrante - sr.puenteSaliente : 0;
     const gncPorcentaje = gncIngreso > 0 ? ((gncMermasExcedencias / gncIngreso) * 100) : 0;
     const gncPrecioUnitario = act?.gncSalesCents && gncVentasM3 > 0 
       ? Math.round(act.gncSalesCents / gncVentasM3) 
@@ -2738,38 +2738,32 @@ operativaRoutes.post('/operativa/lubricantes/:id/editar', async (c) => {
 
 type ReadingInput = {
   surtidor: number;
-  nozzle: number;
   product: Fuel;
   opening: number;
   closing: number;
   priceCents: number;
 };
 
-const READING_ROWS = 8;
+const READING_ROWS = 3;
 
 function parseReadings(
   body: Record<string, unknown>,
 ): ReadingInput[] | string {
   const out: ReadingInput[] = [];
-  const seen = new Set<string>();
+  const seen = new Set<number>();
   let any = false;
   for (let i = 0; i < READING_ROWS; i++) {
     const sur = str(body[`r${i}_surtidor`]);
-    const noz = str(body[`r${i}_nozzle`]);
     const prod = str(body[`r${i}_producto`]);
     const ini = str(body[`r${i}_apertura`]);
     const fin = str(body[`r${i}_cierre`]);
     const precio = str(body[`r${i}_precio`]);
-    if (!sur && !noz && !prod && !ini && !fin && !precio) continue;
+    if (!sur && !prod && !ini && !fin && !precio) continue;
     any = true;
     const label = `En la fila ${i + 1}`;
     const s = Number(sur);
-    if (!Number.isInteger(s) || s < 1 || s > 6) {
-      return `${label}: el surtidor debe ser un número de 1 a 6.`;
-    }
-    const n = Number(noz);
-    if (!Number.isInteger(n) || n < 1 || n > 6) {
-      return `${label}: la boquilla debe ser un número de 1 a 6.`;
+    if (!Number.isInteger(s) || s < 1 || s > 3) {
+      return `${label}: el surtidor debe ser 1, 2 o 3.`;
     }
     if (!isFuel(prod)) {
       return `${label}: elegí un producto válido.`;
@@ -2789,14 +2783,12 @@ function parseReadings(
     if (price === null) {
       return `${label}: ingresá el precio por litro (monto válido en pesos).`;
     }
-    const key = `${s}-${n}`;
-    if (seen.has(key)) {
-      return `${label}: repetís el surtidor ${s} con la boquilla ${n}.`;
+    if (seen.has(s)) {
+      return `${label}: repetís el surtidor ${s}.`;
     }
-    seen.add(key);
+    seen.add(s);
     out.push({
       surtidor: s,
-      nozzle: n,
       product: prod,
       opening,
       closing,
@@ -2810,7 +2802,7 @@ function parseReadings(
 function readingsFormHtml(): string {
   const surtidorOpts =
     `<option value="">—</option>` +
-    [1, 2, 3, 4, 5, 6].map((n) => `<option value="${n}">${n}</option>`).join('');
+    [1, 2, 3].map((n) => `<option value="${n}">${n}</option>`).join('');
   const fuelOpts = `<option value="">—</option>` + fuelOptions();
   let out = '';
   for (let i = 0; i < READING_ROWS; i++) {
@@ -2818,10 +2810,6 @@ function readingsFormHtml(): string {
       <div style="flex:1;min-width:6rem">
         <label for="r${i}_surtidor">Surtidor</label>
         <select id="r${i}_surtidor" name="r${i}_surtidor">${surtidorOpts}</select>
-      </div>
-      <div style="flex:1;min-width:6rem">
-        <label for="r${i}_nozzle">Boquilla</label>
-        <select id="r${i}_nozzle" name="r${i}_nozzle">${surtidorOpts}</select>
       </div>
       <div style="flex:1;min-width:7rem">
         <label for="r${i}_producto">Producto</label>
@@ -2883,8 +2871,8 @@ operativaRoutes.get('/operativa/rendicion', async (c) => {
         <td style="${TD}">${SHIFT_LABELS[r.shift]}</td>
         <td style="${TD}">${MOMENT_FMT.format(r.shiftStart)}</td>
         <td style="${TD}">${MOMENT_FMT.format(r.shiftEnd)}</td>
-        <td style="${TD}">${formatArs(r.openingCents)}</td>
-        <td style="${TD}">${formatArs(r.closingCents)}</td>
+        <td style="${TD}">${r.puenteEntrante}</td>
+        <td style="${TD}">${r.puenteSaliente}</td>
         <td style="${TD}">${formatArs(r.totalSalesCents)}</td>
         <td style="${TD}">${formatArs(r.totalEnsobradoCents)}</td>
         <td style="${TD}"><a href="/operativa/rendicion/${r.id}">Ver detalle</a></td>
@@ -2899,7 +2887,7 @@ operativaRoutes.get('/operativa/rendicion', async (c) => {
     'Rendición de turno',
     `<div class="card">
       <h1>Rendición de turno</h1>
-      <p class="muted">Encabezado del turno más las lecturas de cada surtidor y boquilla.</p>
+      <p class="muted">Encabezado del turno, puente de medición y lecturas de cada surtidor.</p>
       ${filterBar('/operativa/rendicion', fecha, storesHtml)}
       <a class="btn" href="/operativa/rendicion/nuevo">Cargá una rendición</a>
       <table class="papel" style="margin-top:0.75rem">
@@ -2908,8 +2896,8 @@ operativaRoutes.get('/operativa/rendicion', async (c) => {
           <th style="${TH}">Turno</th>
           <th style="${TH}">Inicio</th>
           <th style="${TH}">Fin</th>
-          <th style="${TH}">Apertura</th>
-          <th style="${TH}">Cierre</th>
+          <th style="${TH}">Puente entr.</th>
+          <th style="${TH}">Puente sal.</th>
           <th style="${TH}">Ventas</th>
           <th style="${TH}">Ensobrado</th>
           <th style="${TH}">Detalle</th>
@@ -2926,7 +2914,6 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
   const user = c.get('user')!;
   const access = await resolveStore(c, db, c.req.query('tienda'));
   if ('error' in access) return denied(c, access.error);
-  const storesHtml = await storeOptions(db, access.storeId);
   return render(
     c,
     'Nueva rendición de turno',
@@ -2935,10 +2922,6 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
       <form method="post" action="/operativa/rendicion">
         <h2>Datos del turno</h2>
         <div class="grid">
-          <div>
-            <label for="tienda">Tienda</label>
-            <select id="tienda" name="tienda">${storesHtml}</select>
-          </div>
           <div>
             <label for="fecha">Fecha</label>
             <input id="fecha" name="fecha" type="date" required value="${todayInput()}">
@@ -2964,7 +2947,7 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
         </div>
         
         <h2 style="margin-top:1.25rem">Lecturas de surtidores (GNC)</h2>
-        <p class="muted">Completá una fila por surtidor y boquilla usados en el turno.</p>
+        <p class="muted">Completá una fila por surtidor usado en el turno.</p>
         ${readingsFormHtml()}
         
         <h2 style="margin-top:1.25rem">Ventas del turno</h2>
@@ -2982,16 +2965,8 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
             <input id="gnc_sales" name="gnc_sales" type="number" step="0.01" min="0" value="0" readonly style="background:#f4f4f5">
           </div>
           <div>
-            <label for="lubricantes_qty">Lubricantes - Cantidad</label>
-            <input id="lubricantes_qty" name="lubricantes_qty" type="number" step="1" min="0" value="0">
-          </div>
-          <div>
-            <label for="lubricantes_price">Lubricantes - Precio unitario (pesos)</label>
-            <input id="lubricantes_price" name="lubricantes_price" type="number" step="0.01" min="0" value="0">
-          </div>
-          <div>
-            <label for="lubricantes_sales">Lubricantes - Importe (pesos)</label>
-            <input id="lubricantes_sales" name="lubricantes_sales" type="number" step="0.01" min="0" value="0" readonly style="background:#f4f4f5">
+            <label for="lubricantes_sales">Lubricantes - Importe total (pesos)</label>
+            <input id="lubricantes_sales" name="lubricantes_sales" type="number" step="0.01" min="0" value="0">
           </div>
           <div>
             <label for="varios_qty">Varios - Cantidad</label>
@@ -3068,43 +3043,20 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
           </div>
         </div>
         
-        <h2 style="margin-top:1.25rem">Fondo de cambio transferido</h2>
+        <h2 style="margin-top:1.25rem">Puente de medición</h2>
+        <p class="muted">Ingresá las lecturas del puente al inicio y al fin del turno (m³).</p>
         <div class="grid">
           <div>
-            <label for="fondo_cambio_saliente">Operación saliente (pesos)</label>
-            <input id="fondo_cambio_saliente" name="fondo_cambio_saliente" type="number" step="0.01" min="0" value="0">
+            <label for="puente_entrante">Puente entrante (m³)</label>
+            <input id="puente_entrante" name="puente_entrante" type="number" step="0.001" min="0" value="0" required>
           </div>
           <div>
-            <label for="fondo_cambio_entrante">Operación entrante (pesos)</label>
-            <input id="fondo_cambio_entrante" name="fondo_cambio_entrante" type="number" step="0.01" min="0" value="0">
+            <label for="puente_saliente">Puente saliente (m³)</label>
+            <input id="puente_saliente" name="puente_saliente" type="number" step="0.001" min="0" value="0" required>
           </div>
         </div>
         
-        <h2 style="margin-top:1.25rem">Vales de empleados</h2>
-        <div class="grid">
-          <div>
-            <label for="vales_empleados">Importe vales (pesos)</label>
-            <input id="vales_empleados" name="vales_empleados" type="number" step="0.01" min="0" value="0">
-          </div>
-          <div style="align-self:flex-end">
-            <label style="display:flex;gap:0.5rem;align-items:center;font-weight:400">
-              <input type="checkbox" name="vales_alerta" value="on" checked style="width:auto">
-              <span class="muted">Alerta: No podrán tener más de $20.000 por billetera en caso de robo. La diferencia mayor será abonada por ustedes.</span>
-            </label>
-          </div>
-        </div>
-        
-        <h2 style="margin-top:1.25rem">Control de caja</h2>
-        <div class="grid">
-          <div>
-            <label for="apertura">Efectivo de apertura (pesos)</label>
-            <input id="apertura" name="apertura" type="number" step="0.01" min="0" value="0" required>
-          </div>
-          <div>
-            <label for="cierre">Efectivo de cierre (pesos)</label>
-            <input id="cierre" name="cierre" type="number" step="0.01" min="0" value="0" required>
-          </div>
-        </div>
+        <p class="muted" style="margin-top:0.75rem">Nota: No podrán tener más de $20.000 por billetera en caso de robo. La diferencia mayor será abonada por ustedes.</p>
         
         <label for="notas">Observaciones (opcional)</label>
         <textarea id="notas" name="notas" rows="3" placeholder="Observaciones del turno..."></textarea>
@@ -3125,10 +3077,9 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
             return Math.round(q * p);
           }
           const gnc = importe('gnc_qty', 'gnc_price');
-          const lub = importe('lubricantes_qty', 'lubricantes_price');
+          const lub = cents(document.getElementById('lubricantes_sales').value);
           const var_ = importe('varios_qty', 'varios_price');
           document.getElementById('gnc_sales').value = fmt(gnc);
-          document.getElementById('lubricantes_sales').value = fmt(lub);
           document.getElementById('varios_sales').value = fmt(var_);
           document.getElementById('total_sales').value = fmt(gnc + lub + var_);
           // Ensobrado
@@ -3198,21 +3149,21 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
       '/operativa/rendicion/nuevo',
     );
   }
-  const apertura = centsOr0(body.apertura);
-  if (apertura === null) {
+  const puenteEntrante = floatFrom(body.puente_entrante);
+  if (puenteEntrante === null) {
     return fail(
       c,
       'Rendición de turno',
-      'La apertura de caja no es un monto válido en pesos.',
+      'El puente entrante no es un valor válido.',
       '/operativa/rendicion/nuevo',
     );
   }
-  const cierre = centsOr0(body.cierre);
-  if (cierre === null) {
+  const puenteSaliente = floatFrom(body.puente_saliente);
+  if (puenteSaliente === null) {
     return fail(
       c,
       'Rendición de turno',
-      'El cierre de caja no es un monto válido en pesos.',
+      'El puente saliente no es un valor válido.',
       '/operativa/rendicion/nuevo',
     );
   }
@@ -3243,15 +3194,13 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
   // Ventas por rubro: el importe se calcula SIEMPRE en el servidor
   const gncQty = qtyFrom(body.gnc_qty);
   const gncPriceCents = centsOr0(body.gnc_price);
-  const lubricantesQty = qtyFrom(body.lubricantes_qty);
-  const lubricantesPriceCents = centsOr0(body.lubricantes_price);
+  const lubricantesSalesCents = centsOr0(body.lubricantes_sales);
   const variosQty = qtyFrom(body.varios_qty);
   const variosPriceCents = centsOr0(body.varios_price);
   if (
     gncQty === null ||
     gncPriceCents === null ||
-    lubricantesQty === null ||
-    lubricantesPriceCents === null ||
+    lubricantesSalesCents === null ||
     variosQty === null ||
     variosPriceCents === null
   ) {
@@ -3263,9 +3212,6 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
     );
   }
   const gncSalesCents = Math.round(gncQty * gncPriceCents);
-  const lubricantesSalesCents = Math.round(
-    lubricantesQty * lubricantesPriceCents,
-  );
   const variosSalesCents = Math.round(variosQty * variosPriceCents);
   const totalSalesCents = gncSalesCents + lubricantesSalesCents + variosSalesCents;
   
@@ -3283,12 +3229,6 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
   const sobre6ImporteCents = centsFrom(body.sobre6_importe) ?? 0;
   const totalEnsobradoCents = sobre1ImporteCents + sobre2ImporteCents + sobre3ImporteCents + sobre4ImporteCents + sobre5ImporteCents + sobre6ImporteCents;
   
-  const fondoCambioSalienteCents = centsFrom(body.fondo_cambio_saliente) ?? 0;
-  const fondoCambioEntranteCents = centsFrom(body.fondo_cambio_entrante) ?? 0;
-  
-  const valesEmpleadosCents = centsFrom(body.vales_empleados) ?? 0;
-  const valesAlerta = str(body.vales_alerta) === 'on';
-  
   const observaciones = str(body.notas) || null;
   
   const inserted = await db
@@ -3300,13 +3240,9 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
       shiftStart: inicio,
       shiftEnd: fin,
       cashierId: user.id,
-      openingCents: apertura,
-      closingCents: cierre,
       gncQty,
       gncPriceCents,
       gncSalesCents,
-      lubricantesQty,
-      lubricantesPriceCents,
       lubricantesSalesCents,
       variosQty,
       variosPriceCents,
@@ -3325,10 +3261,8 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
       sobre6Hora,
       sobre6ImporteCents,
       totalEnsobradoCents,
-      fondoCambioSalienteCents,
-      fondoCambioEntranteCents,
-      valesEmpleadosCents,
-      valesAlerta,
+      puenteEntrante,
+      puenteSaliente,
       observaciones,
       notes: null,
     })
@@ -3338,7 +3272,6 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
     readings.map((r) => ({
       reportId,
       surtidor: r.surtidor,
-      nozzle: r.nozzle,
       product: r.product,
       openingReading: r.opening,
       closingReading: r.closing,
@@ -3373,7 +3306,6 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
     .where(eq(shiftReportReadings.reportId, report.id))
     .orderBy(
       asc(shiftReportReadings.surtidor),
-      asc(shiftReportReadings.nozzle),
     );
   const totals = await db
     .select({
@@ -3387,7 +3319,6 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
     .map(
       (r) => `<tr>
         <td style="${TD}">${r.surtidor}</td>
-        <td style="${TD}">${r.nozzle}</td>
         <td style="${TD}">${FUEL_LABELS[r.product]}</td>
         <td style="${TD}">${r.openingReading}</td>
         <td style="${TD}">${r.closingReading}</td>
@@ -3436,14 +3367,9 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
         <span class="pill">Inicio: ${MOMENT_FMT.format(report.shiftStart)}</span>
         <span class="pill">Fin: ${MOMENT_FMT.format(report.shiftEnd)}</span>
       </div>
-      <div class="row" style="margin-top:0.5rem">
-        <span>Apertura de caja: <strong>${formatArs(report.openingCents)}</strong></span>
-        <span>Cierre de caja: <strong>${formatArs(report.closingCents)}</strong></span>
-      </div>
       <table class="papel" style="margin-top:0.75rem">
         <thead><tr>
           <th style="${TH}">Surtidor</th>
-          <th style="${TH}">Boquilla</th>
           <th style="${TH}">Producto</th>
           <th style="${TH}">Lect. inicial</th>
           <th style="${TH}">Lect. final</th>
@@ -3451,9 +3377,9 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
           <th style="${TH}">Precio/L</th>
           <th style="${TH}">Total</th>
         </tr></thead>
-        <tbody>${bodyRows || `<tr><td colspan="8" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
+        <tbody>${bodyRows || `<tr><td colspan="7" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
         <tfoot><tr>
-          <td colspan="5" style="${TD}"><strong>Suma del detalle</strong></td>
+          <td colspan="4" style="${TD}"><strong>Suma del detalle</strong></td>
           <td style="${TD}"><strong>${totalVolume.toFixed(2)}</strong></td>
           <td style="${TD}"></td>
           <td style="${TD}"><strong>${formatArs(totalCents)}</strong></td>
@@ -3470,7 +3396,12 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
         </tr></thead>
         <tbody>
           ${rubroRow('GNC', report.gncQty, report.gncPriceCents, report.gncSalesCents, 'm³')}
-          ${rubroRow('Lubricantes', report.lubricantesQty, report.lubricantesPriceCents, report.lubricantesSalesCents, 'un.')}
+          <tr>
+            <td style="${TD}">Lubricantes</td>
+            <td style="${TD_NUM}">—</td>
+            <td style="${TD_NUM}">—</td>
+            <td style="${TD_NUM}">${formatArs(report.lubricantesSalesCents)}</td>
+          </tr>
           ${rubroRow('Varios', report.variosQty, report.variosPriceCents, report.variosSalesCents, 'un.')}
           <tr>
             <td style="${TD}"><strong>Total ventas</strong></td>
@@ -3498,18 +3429,12 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
         </tbody>
       </table>
 
-      <h2 style="margin-top:1.25rem">Fondo de cambio transferido</h2>
+      <h2 style="margin-top:1.25rem">Puente de medición</h2>
       <div class="row">
-        <span>Operación saliente: <strong>${formatArs(report.fondoCambioSalienteCents)}</strong></span>
-        <span>Operación entrante: <strong>${formatArs(report.fondoCambioEntranteCents)}</strong></span>
+        <span>Entrante: <strong>${report.puenteEntrante.toFixed(3)} m³</strong></span>
+        <span>Saliente: <strong>${report.puenteSaliente.toFixed(3)} m³</strong></span>
       </div>
-
-      <h2 style="margin-top:1.25rem">Vales de empleados</h2>
-      <div class="row">
-        <span>Importe: <strong>${formatArs(report.valesEmpleadosCents)}</strong></span>
-        <span class="pill">${report.valesAlerta ? 'Alerta $20.000 activada' : 'Sin alerta'}</span>
-      </div>
-      ${report.valesAlerta ? `<p class="muted" style="margin-top:0.35rem">No podrán tener más de $20.000 por billetera en caso de robo. La diferencia mayor será abonada por ustedes.</p>` : ''}
+      <p class="muted" style="margin-top:0.35rem">No podrán tener más de $20.000 por billetera en caso de robo. La diferencia mayor será abonada por ustedes.</p>
 
       <h2 style="margin-top:1.25rem">Observaciones</h2>
       <p>${report.observaciones ? escapeHtml(report.observaciones) : report.notes ? escapeHtml(report.notes) : '<span class="muted">Sin observaciones.</span>'}</p>

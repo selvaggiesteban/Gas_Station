@@ -438,17 +438,15 @@ describe('operativa', () => {
         turno: 'evening',
         inicio: '2026-11-04T14:00',
         fin: '2026-11-04T22:00',
-        apertura: '2000',
-        cierre: '2100',
+        puente_entrante: '1000.25',
+        puente_saliente: '900.75',
         notas: 'turno tarde',
         r0_surtidor: '1',
-        r0_nozzle: '2',
         r0_producto: 'nafta',
         r0_apertura: '1000.5',
         r0_cierre: '1250.5',
         r0_precio: '1200',
         r1_surtidor: '3',
-        r1_nozzle: '1',
         r1_producto: 'gasoil',
         r1_apertura: '500',
         r1_cierre: '625.5',
@@ -469,14 +467,14 @@ describe('operativa', () => {
       .first<{
         id: number;
         shift: string;
-        opening_cents: number;
-        closing_cents: number;
+        puente_entrante: number;
+        puente_saliente: number;
         cashier_id: number | null;
       }>();
     expect(report).toBeTruthy();
     expect(report!.shift).toBe('evening');
-    expect(report!.opening_cents).toBe(200000);
-    expect(report!.closing_cents).toBe(210000);
+    expect(report!.puente_entrante).toBeCloseTo(1000.25, 5);
+    expect(report!.puente_saliente).toBeCloseTo(900.75, 5);
     expect(report!.cashier_id).toBeTruthy();
 
     const readings = await env.DB.prepare(
@@ -485,7 +483,6 @@ describe('operativa', () => {
       .bind(report!.id)
       .all<{
         surtidor: number;
-        nozzle: number;
         product: string;
         opening_reading: number;
         closing_reading: number;
@@ -684,7 +681,7 @@ describe('operativa', () => {
     expect(await count('sales_summaries')).toBe(ventas);
   });
 
-  it('rendición ampliada: ventas por rubro, ensobrada, fondo, vales y observaciones', async () => {
+  it('rendición ampliada: ventas por rubro, ensobrada, puente y observaciones', async () => {
     const cookie = await registerAs(
       'Rendicion Ampliada',
       uniqueEmail('rendicion-amp'),
@@ -697,25 +694,19 @@ describe('operativa', () => {
         turno: 'adicional',
         inicio: '2026-11-05T08:00',
         fin: '2026-11-05T12:00',
-        apertura: '1000',
-        cierre: '1200',
+        puente_entrante: '1000.5',
+        puente_saliente: '900.25',
         gnc_qty: '100',
         gnc_price: '1500',
-        lubricantes_qty: '4',
-        lubricantes_price: '2500',
+        lubricantes_sales: '10000',
         varios_qty: '2',
         varios_price: '800',
         sobre1_hora: '09:30',
         sobre1_importe: '5000',
         sobre2_hora: '11:00',
         sobre2_importe: '3500',
-        fondo_cambio_saliente: '2000',
-        fondo_cambio_entrante: '2500',
-        vales_empleados: '15000',
-        vales_alerta: 'on',
         notas: 'observación del turno',
         r0_surtidor: '2',
-        r0_nozzle: '1',
         r0_producto: 'gnc',
         r0_apertura: '100',
         r0_cierre: '200',
@@ -738,20 +729,21 @@ describe('operativa', () => {
     expect(row!.gnc_qty).toBe(100);
     expect(row!.gnc_price_cents).toBe(150000);
     expect(row!.gnc_sales_cents).toBe(100 * 150000);
-    expect(row!.lubricantes_sales_cents).toBe(4 * 250000);
+    expect(row!.lubricantes_sales_cents).toBe(1000000);
     expect(row!.varios_sales_cents).toBe(2 * 80000);
     expect(row!.total_sales_cents).toBe(
-      100 * 150000 + 4 * 250000 + 2 * 80000,
+      100 * 150000 + 1000000 + 2 * 80000,
     );
     expect(row!.sobre_1_hora).toBe('09:30');
     expect(row!.sobre_1_importe_cents).toBe(500000);
     expect(row!.sobre_2_hora).toBe('11:00');
     expect(row!.sobre_2_importe_cents).toBe(350000);
     expect(row!.total_ensobrado_cents).toBe(850000);
-    expect(row!.fondo_cambio_saliente_cents).toBe(200000);
-    expect(row!.fondo_cambio_entrante_cents).toBe(250000);
-    expect(row!.vales_empleados_cents).toBe(1500000);
-    expect(row!.vales_alerta).toBe(1);
+    expect(row!.puente_entrante).toBeCloseTo(1000.5, 5);
+    expect(row!.puente_saliente).toBeCloseTo(900.25, 5);
+    expect(row!.fondo_cambio_saliente_cents).toBeUndefined();
+    expect(row!.vales_empleados_cents).toBeUndefined();
+    expect(row!.opening_cents).toBeUndefined();
     expect(row!.observaciones).toBe('observación del turno');
 
     const detalle = await get(`/operativa/rendicion/${id}`, cookie);
@@ -759,9 +751,10 @@ describe('operativa', () => {
     const html = await detalle.text();
     expect(html).toContain('Ventas del turno');
     expect(html).toContain('Recaudación ensobrada');
-    expect(html).toContain('Fondo de cambio transferido');
-    expect(html).toContain('Vales de empleados');
-    expect(html).toContain('Alerta $20.000 activada');
+    expect(html).toContain('Puente de medición');
+    expect(html).toContain('1000.500 m³');
+    expect(html).not.toContain('Fondo de cambio transferido');
+    expect(html).not.toContain('Vales de empleados');
     expect(html).toContain('observación del turno');
     expect(html).toContain(
       new Intl.NumberFormat('es-AR', {
@@ -775,6 +768,7 @@ describe('operativa', () => {
     const htmlListado = await listado.text();
     expect(htmlListado).toContain('Ventas');
     expect(htmlListado).toContain('Ensobrado');
+    expect(htmlListado).toContain('Puente entr.');
     expect(htmlListado).toContain(formatArs(850000));
   });
 

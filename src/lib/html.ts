@@ -298,11 +298,12 @@ function headerNav(opts: PageOptions): string {
   }
   if (opts.landing) {
     return `<nav class="row">
+        <a href="/tienda">Tienda</a>
         <a href="/login">Accedé</a>
         <a class="btn" href="/registro">Creá tu cuenta</a>
       </nav>`;
   }
-  return `<div class="row"><a href="/login">Accedé</a><a href="/registro">Creá tu cuenta</a></div>`;
+  return `<div class="row"><a href="/tienda">Tienda</a><a href="/login">Accedé</a><a href="/registro">Creá tu cuenta</a></div>`;
 }
 
 function sidebarLinks(user: { name: string; points: number; role: string }): string {

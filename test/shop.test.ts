@@ -111,10 +111,23 @@ async function checkout(cookie: string, fd: FormData): Promise<Response> {
 }
 
 describe('shop', () => {
-  it('/tienda sin sesión redirige a /login', async () => {
+  it('/tienda es pública: se ve sin sesión y con menú de invitado', async () => {
     const res = await get('/tienda');
-    expect(res.status).toBe(302);
-    expect(res.headers.get('location')).toBe('/login');
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('<h1>Tienda</h1>');
+    expect(html).toContain('href="/login"');
+    expect(html).not.toContain('Cerrar sesión');
+  });
+
+  it('/carrito y /checkout también son públicos', async () => {
+    const carrito = await get('/carrito');
+    expect(carrito.status).toBe(200);
+    expect(await carrito.text()).toContain('carrito está vacío');
+
+    const checkout = await get('/checkout');
+    expect(checkout.status).toBe(302);
+    expect(checkout.headers.get('location')).toBe('/tienda');
   });
 
   it('/tienda muestra productos y el carrito refleja el alta', async () => {
@@ -266,5 +279,107 @@ describe('shop', () => {
       .bind(productId)
       .first<{ stock: number }>();
     expect(stock!.stock).toBe(1);
+  });
+
+  it('invitado compra sin sesión: crea cuenta, queda logueado y la orden es suya', async () => {
+    const productId = await insertProduct({
+      name: 'GNC Kit',
+      slug: 'gnc-kit-1',
+      priceCents: 50000,
+      stock: 4,
+    });
+    // Sin cookie de sesión: solo la del carrito.
+    const add = await post('/carrito/agregar', {
+      productId: String(productId),
+      qty: '1',
+    });
+    expect(add.status).toBe(302);
+    const cart = cookieNamed(add, 'gs_cart');
+    expect(cart).toBeTruthy();
+
+    // El checkout sin sesión muestra el formulario de registro.
+    const pagina = await get('/checkout', cart!);
+    expect(pagina.status).toBe(200);
+    const html = await pagina.text();
+    expect(html).toContain('Comprá como invitado');
+    expect(html).toContain('name="password2"');
+
+    // Compra dejando los datos para crear la cuenta.
+    const email = `invitado.${Date.now()}@test.com`;
+    const fd = new FormData();
+    fd.append('cupon', '');
+    fd.append('nombre', 'Fede Invitado');
+    fd.append('email', email);
+    fd.append('password', 'supersecret1');
+    fd.append('password2', 'supersecret1');
+    const res = await checkout(cart!, fd);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/ordenes?aviso=comprobante');
+
+    // Queda logueado con la sesión que se creó en el mismo checkout.
+    const sesion = cookieNamed(res, 'gs_session');
+    expect(sesion).toBeTruthy();
+
+    // La cuenta existe y es cliente.
+    const cuenta = await env.DB.prepare(
+      'select id, name, role from users where email = ?',
+    )
+      .bind(email)
+      .first<{ id: number; name: string; role: string }>();
+    expect(cuenta).toBeTruthy();
+    expect(cuenta!.name).toBe('Fede Invitado');
+    expect(cuenta!.role).toBe('customer');
+
+    // La orden quedó a nombre del nuevo usuario y bajó el stock.
+    const order = await env.DB.prepare(
+      'select user_id, status from orders order by id desc limit 1',
+    ).first<{ user_id: number; status: string }>();
+    expect(order!.user_id).toBe(cuenta!.id);
+    expect(order!.status).toBe('pending');
+
+    const stock = await env.DB.prepare('select stock from products where id = ?')
+      .bind(productId)
+      .first<{ stock: number }>();
+    expect(stock!.stock).toBe(3);
+
+    // Con la sesión devuelta puede ver "Mis órdenes".
+    const ordenes = await get('/ordenes', sesion!);
+    expect(ordenes.status).toBe(200);
+    expect(await ordenes.text()).toContain('Pendiente');
+  });
+
+  it('checkout de invitado con email repetido no crea cuenta ni orden', async () => {
+    await register('Zoe Existente', 'zoya.existente@test.com');
+    const productId = await insertProduct({
+      name: 'Toalla de Papel',
+      slug: 'toalla-1',
+      priceCents: 10000,
+      stock: 2,
+    });
+    const add = await post('/carrito/agregar', {
+      productId: String(productId),
+      qty: '1',
+    });
+    const cart = cookieNamed(add, 'gs_cart')!;
+
+    const before = await env.DB.prepare(
+      'select count(*) as n from orders',
+    ).first<{ n: number }>();
+
+    const fd = new FormData();
+    fd.append('cupon', '');
+    fd.append('nombre', 'Otro Invitado');
+    fd.append('email', 'zoya.existente@test.com');
+    fd.append('password', 'supersecret1');
+    fd.append('password2', 'supersecret1');
+    const res = await checkout(cart, fd);
+    expect(res.status).toBe(422);
+    expect(await res.text()).toContain('Ya existe una cuenta con ese email');
+
+    const after = await env.DB.prepare(
+      'select count(*) as n from orders',
+    ).first<{ n: number }>();
+    expect(after!.n).toBe(before!.n);
+    expect(cookieNamed(res, 'gs_session')).toBeNull();
   });
 });

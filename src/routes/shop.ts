@@ -4,6 +4,13 @@ import { asc, desc, eq } from 'drizzle-orm';
 import type { AppEnv } from '../env';
 import { dbOf, brandOf, requireAuth } from '../middleware/auth';
 import { page, escapeHtml } from '../lib/html';
+import { hashPassword, iterationsFromEnv } from '../lib/crypto';
+import {
+  createSession,
+  setSessionCookie,
+  type SessionUser,
+} from '../lib/session';
+import { sendEmail } from '../lib/email';
 import {
   getCart,
   setCart,
@@ -27,11 +34,12 @@ import {
   validateCoupon,
   type CheckoutLine,
 } from '../services/orders';
-import { orderItems, orders, products } from '../db/schema';
+import { orderItems, orders, products, users } from '../db/schema';
 
 export const shopRoutes = new Hono<AppEnv>();
 
 const MAX_PROOF_BYTES = 5 * 1024 * 1024;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Pendiente',
@@ -73,8 +81,8 @@ function cartLink(cart: CartMap): string {
   return n > 0 ? ` /carrito (${n})` : '';
 }
 
-shopRoutes.get('/tienda', requireAuth(), async (c) => {
-  const user = c.get('user')!;
+shopRoutes.get('/tienda', async (c) => {
+  const user = c.get('user');
   const db = dbOf(c);
   const rows = await db
     .select()
@@ -121,8 +129,8 @@ shopRoutes.get('/tienda', requireAuth(), async (c) => {
   );
 });
 
-shopRoutes.get('/carrito', requireAuth(), async (c) => {
-  const user = c.get('user')!;
+shopRoutes.get('/carrito', async (c) => {
+  const user = c.get('user');
   const db = dbOf(c);
   const cart = getCart(c);
   const rows = await loadCartProducts(db, cart);
@@ -177,7 +185,7 @@ shopRoutes.get('/carrito', requireAuth(), async (c) => {
   );
 });
 
-shopRoutes.post('/carrito/agregar', requireAuth(), async (c) => {
+shopRoutes.post('/carrito/agregar', async (c) => {
   const body = await c.req.parseBody();
   const id = productIdFrom(body.productId);
   const qty = qtyFrom(body.qty) ?? 1;
@@ -232,7 +240,7 @@ shopRoutes.post('/carrito/agregar', requireAuth(), async (c) => {
   return c.redirect('/carrito');
 });
 
-shopRoutes.post('/carrito', requireAuth(), async (c) => {
+shopRoutes.post('/carrito', async (c) => {
   const body = await c.req.parseBody();
   const id = productIdFrom(body.productId);
   const cart = getCart(c);
@@ -251,7 +259,7 @@ shopRoutes.post('/carrito', requireAuth(), async (c) => {
   return c.redirect('/carrito');
 });
 
-shopRoutes.post('/carrito/quitar', requireAuth(), async (c) => {
+shopRoutes.post('/carrito/quitar', async (c) => {
   const body = await c.req.parseBody();
   const id = productIdFrom(body.productId);
   const cart = getCart(c);
@@ -262,7 +270,7 @@ shopRoutes.post('/carrito/quitar', requireAuth(), async (c) => {
   return c.redirect('/carrito');
 });
 
-shopRoutes.post('/carrito/vaciar', requireAuth(), async (c) => {
+shopRoutes.post('/carrito/vaciar', async (c) => {
   setCart(c, {});
   return c.redirect('/carrito');
 });
@@ -273,9 +281,10 @@ function checkoutPage(
     lines: CheckoutLine[];
     subtotal: number;
     error?: string | null;
+    user?: SessionUser | null;
   },
 ): Response {
-  const user = c.get('user')!;
+  const user = opts.user ?? c.get('user');
   const summary = opts.lines
     .map(
       (line) =>
@@ -283,6 +292,21 @@ function checkoutPage(
          <span>${formatArs(line.product.priceCents * line.qty)}</span></div>`,
     )
     .join('');
+  const cuenta = user
+    ? `<p class="muted">Comprás a nombre de <strong>${escapeHtml(user.name)}</strong> (${escapeHtml(user.email)}).</p>
+        <form method="post" action="/logout" style="margin:0 0 0.5rem">
+          <button type="submit" class="secondary" style="margin-top:0">¿No sos vos? Cerrá sesión</button>
+        </form>`
+    : `<h2 style="margin-top:1rem">Comprá como invitado</h2>
+        <p class="muted">Dejá tus datos para crear tu cuenta y poder seguir tu pedido.</p>
+        <label for="ck-nombre">Nombre</label>
+        <input id="ck-nombre" name="nombre" type="text" required minlength="2" autocomplete="name">
+        <label for="ck-email">Email</label>
+        <input id="ck-email" name="email" type="email" required autocomplete="email">
+        <label for="ck-password">Contraseña</label>
+        <input id="ck-password" name="password" type="password" required minlength="8" autocomplete="new-password">
+        <label for="ck-password2">Repetí la contraseña</label>
+        <input id="ck-password2" name="password2" type="password" required minlength="8" autocomplete="new-password">`;
   return c.html(
     page(
       {
@@ -296,6 +320,7 @@ function checkoutPage(
         ${summary}
         <div class="row"><strong>Subtotal: ${formatArs(opts.subtotal)}</strong></div>
         <form method="post" action="/checkout" enctype="multipart/form-data">
+          ${cuenta}
           <label for="cupon">Cupón (opcional)</label>
           <input id="cupon" name="cupon" type="text" placeholder="CÓDIGO">
           <label for="comprobante">Comprobante de transferencia (imagen o PDF, máx. 5&nbsp;MB — opcional)</label>
@@ -310,7 +335,7 @@ function checkoutPage(
   );
 }
 
-shopRoutes.get('/checkout', requireAuth(), async (c) => {
+shopRoutes.get('/checkout', async (c) => {
   const db = dbOf(c);
   const cart = getCart(c);
   const rows = await loadCartProducts(db, cart);
@@ -319,8 +344,8 @@ shopRoutes.get('/checkout', requireAuth(), async (c) => {
   return checkoutPage(c, { lines, subtotal: subtotalOf(lines) });
 });
 
-shopRoutes.post('/checkout', requireAuth(), async (c) => {
-  const user = c.get('user')!;
+shopRoutes.post('/checkout', async (c) => {
+  let user = c.get('user');
   const db = dbOf(c);
   const cart = getCart(c);
   const rows = await loadCartProducts(db, cart);
@@ -329,12 +354,70 @@ shopRoutes.post('/checkout', requireAuth(), async (c) => {
   const subtotal = subtotalOf(lines);
 
   const fail = (error: string) =>
-    checkoutPage(c, { lines, subtotal, error });
+    checkoutPage(c, { lines, subtotal, error, user });
 
   const sErr = stockError(lines);
   if (sErr) return fail(sErr);
 
   const body = await c.req.parseBody();
+
+  // Sin sesión: los datos del checkout crean la cuenta y dejan al comprador
+  // logueado, para que la orden quede a su nombre.
+  if (!user) {
+    const nombre = str(body.nombre);
+    const email = str(body.email).toLowerCase();
+    const password = str(body.password);
+    const password2 = str(body.password2);
+    if (nombre.length < 2) {
+      return fail('Ingresá tu nombre (mínimo 2 letras).');
+    }
+    if (!EMAIL_RE.test(email)) {
+      return fail('Ingresá un email válido.');
+    }
+    if (password.length < 8) {
+      return fail('La contraseña debe tener al menos 8 caracteres.');
+    }
+    if (password !== password2) {
+      return fail('Las contraseñas no coinciden.');
+    }
+    const passwordHash = await hashPassword(password, iterationsFromEnv(c.env));
+    let nuevoId: number;
+    try {
+      const inserted = await db
+        .insert(users)
+        .values({
+          name: nombre,
+          email,
+          passwordHash,
+          role: 'customer',
+          emailVerifiedAt: new Date(),
+        })
+        .returning({ id: users.id });
+      nuevoId = inserted[0]!.id;
+    } catch {
+      return fail(
+        'Ya existe una cuenta con ese email. Iniciá sesión para comprar con tu cuenta.',
+      );
+    }
+    const token = await createSession(db, nuevoId, {
+      ip: c.req.header('cf-connecting-ip') ?? null,
+      userAgent: c.req.header('user-agent') ?? null,
+    });
+    setSessionCookie(c, token);
+    user = {
+      id: nuevoId,
+      name: nombre,
+      email,
+      role: 'customer',
+      points: 0,
+    };
+    await sendEmail({
+      to: email,
+      subject: 'Bienvenido a Gas Station',
+      text: `Hola ${nombre}, tu cuenta fue creada correctamente.`,
+    });
+  }
+
   const couponCode = str(body.cupon);
   let discountCents = 0;
   let couponId: number | null = null;

@@ -1,0 +1,81 @@
+name: D1 Backup to R2
+
+on:
+  schedule:
+    # Every Sunday at 03:00 UTC
+    - cron: '0 3 * * 0'
+  workflow_dispatch: # Manual trigger
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    name: Export D1 to R2
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --progress=false
+
+      - name: Install Wrangler
+        run: npm install -g wrangler@latest
+
+      - name: Export D1 database
+        id: export
+        run: |
+          set -euo pipefail
+          DATE=$(date -u +%Y-%m-%d)
+          OUTPUT_FILE="db-backups/${DATE}.sql"
+          
+          echo "Exporting D1 database..."
+          wrangler d1 execute gas-station-db --remote --command ".dump" > dump.sql
+          
+          echo "Uploading to R2..."
+          wrangler r2 object put db-backups/${DATE}.sql --file=dump.sql --remote
+          wrangler r2 object put db-backups/latest.sql --file=dump.sql --remote
+          
+          echo "Backup completed: ${OUTPUT_FILE}"
+          echo "output_file=${OUTPUT_FILE}" >> $GITHUB_OUTPUT
+
+      - name: Cleanup old backups (keep 12 weeks)
+        run: |
+          set -euo pipefail
+          echo "Cleaning up backups older than 12 weeks..."
+          
+          wrangler r2 object list db-backups --remote 2>/dev/null | grep '\.sql$' | while read -r line; do
+            if [[ $line =~ ([0-9]{4}-[0-9]{2}-[0-9]{2})\.sql ]]; then
+              FILE_DATE="${BASH_REMATCH[1]}"
+              if [ "${FILE_DATE}" != "latest" ]; then
+                FILE_TIMESTAMP=$(date -d "${FILE_DATE}" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "${FILE_DATE}" +%s 2>/dev/null)
+                CUTOFF=$(date -d '12 weeks ago' +%s 2>/dev/null || date -j -v-12w +%s 2>/dev/null)
+                
+                if [ "${FILE_TIMESTAMP}" -lt "${CUTOFF}" ]; then
+                  echo "Deleting old backup: ${line}"
+                  wrangler r2 object delete db-backups/${line} --remote
+                fi
+              fi
+            fi
+          done
+          
+          echo "Cleanup completed"
+
+      - name: Verify backup
+        run: |
+          set -euo pipefail
+          DATE=$(date -u +%Y-%m-%d)
+          echo "Verifying backup exists..."
+          wrangler r2 object get db-backups/${DATE}.sql --remote --head
+          echo "Backup verified successfully"

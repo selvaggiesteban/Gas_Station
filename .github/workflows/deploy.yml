@@ -23,7 +23,9 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm ci --prefer-offline --no-audit --progress=false 2>&1 || \
+          (sleep 10 && npm ci --prefer-offline --no-audit --progress=false)
 
       - name: Typecheck
         run: npx tsc --noEmit

@@ -220,6 +220,7 @@ export function page(opts: PageOptions, body: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(opts.title)} · ${esc(brand)}</title>
 <style>${BASE_STYLE}</style>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body${opts.user ? '' : ' class="public"'}> `;
 

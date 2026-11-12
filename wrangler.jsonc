@@ -7,6 +7,10 @@
   "observability": {
     "enabled": true
   },
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS"
+  },
   "d1_databases": [
     {
       "binding": "DB",
@@ -19,6 +23,21 @@
     {
       "binding": "R2",
       "bucket_name": "gas-station-assets"
+    },
+    {
+      "binding": "LOGS_WORKERS",
+      "bucket_name": "logs-workers"
+    },
+    {
+      "binding": "DB_BACKUPS",
+      "bucket_name": "db-backups"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "SESSIONS",
+      "id": "d49d3d7fc026476db543fdfa911f47e1",
+      "preview_id": "d49d3d7fc026476db543fdfa911f47e1"
     }
   ],
   "triggers": {
@@ -26,6 +45,7 @@
   },
   "vars": {
     "BRAND_NAME": "LESCO GNC",
-    "PBKDF2_ITERATIONS": "30000"
+    "PBKDF2_ITERATIONS": "30000",
+    "APP_VERSION": "0.1.0"
   }
 }

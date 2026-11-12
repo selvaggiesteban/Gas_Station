@@ -37,6 +37,9 @@ import {
 import { enrollInRaffle } from '../services/raffle';
 import { orderItems, orders, products, users } from '../db/schema';
 
+// Version injected at build time via wrangler --var or environment
+const APP_VERSION = (globalThis as any).__APP_VERSION__ ?? 'dev';
+
 export const shopRoutes = new Hono<AppEnv>();
 
 const MAX_PROOF_BYTES = 5 * 1024 * 1024;
@@ -69,6 +72,27 @@ function formatArs(cents: number): string {
     style: 'currency',
     currency: 'ARS',
   }).format(cents / 100);
+}
+
+/**
+ * Verify a Turnstile token by calling the internal verification endpoint.
+ * Returns true if valid, false otherwise.
+ */
+async function verifyTurnstile(c: Context<AppEnv>, token: string | undefined, action: string): Promise<boolean> {
+  if (!token || typeof token !== 'string' || token.length === 0) {
+    return false;
+  }
+  try {
+    const response = await fetch(new URL('/turnstile/verify', c.req.url).toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, action }),
+    });
+    const result = await response.json() as { success?: boolean };
+    return result.success === true;
+  } catch {
+    return false;
+  }
 }
 
 function cartCount(cart: CartMap): number {
@@ -126,7 +150,7 @@ shopRoutes.get('/tienda', async (c) => {
         <p><a href="/carrito">Ver carrito${escapeHtml(cartLink(cart))}</a></p>
       </div>
       ${cards || '<div class="card"><p class="muted">No hay productos disponibles por el momento.</p></div>'}`,
-    ),
+    ) + swRegistrationScript(),
   );
 });
 
@@ -146,7 +170,7 @@ shopRoutes.get('/carrito', async (c) => {
           <p class="muted">Agregá productos desde la tienda para comenzar tu compra.</p>
           <a class="btn" href="/tienda">Ir a la tienda</a>
         </div>`,
-      ),
+      ) + swRegistrationScript(),
     );
   }
 
@@ -182,7 +206,7 @@ shopRoutes.get('/carrito', async (c) => {
           <button type="submit" class="secondary">Vaciar carrito</button>
         </form>
       </div>`,
-    ),
+    ) + swRegistrationScript(),
   );
 });
 
@@ -286,6 +310,10 @@ function checkoutPage(
   },
 ): Response {
   const user = opts.user ?? c.get('user');
+  const siteKey = c.env.TURNSTILE_SITE_KEY || '';
+  const turnstileHtml = siteKey
+    ? `<div class="cf-turnstile" data-sitekey="${escapeHtml(siteKey)}" data-action="checkout" data-theme="light"></div>`
+    : '';
   const summary = opts.lines
     .map(
       (line) =>
@@ -326,12 +354,13 @@ function checkoutPage(
           <input id="cupon" name="cupon" type="text" placeholder="CÓDIGO">
           <label for="comprobante">Comprobante de transferencia (imagen o PDF, máx. 5&nbsp;MB — opcional)</label>
           <input id="comprobante" name="comprobante" type="file" accept="image/*,application/pdf">
+          ${turnstileHtml}
           <button type="submit" name="metodo" value="transferencia">Confirmá por transferencia</button>
           <button type="button" class="secondary" disabled style="opacity:0.6;cursor:not-allowed">Pagar con Mercado Pago (próximamente)</button>
         </form>
         <p class="muted">Transferís el total a la cuenta indicada y adjuntás el comprobante. Vamos a revisar el pago y a confirmar tu pedido.</p>
       </div>`,
-    ),
+    ) + swRegistrationScript(),
     opts.error ? 422 : 200,
   );
 }
@@ -361,6 +390,15 @@ shopRoutes.post('/checkout', async (c) => {
   if (sErr) return fail(sErr);
 
   const body = await c.req.parseBody();
+
+  // Verify Turnstile if configured
+  if (c.env.TURNSTILE_SECRET_KEY) {
+    const turnstileToken = str(body['cf-turnstile-response']);
+    const validTurnstile = await verifyTurnstile(c, turnstileToken, 'checkout');
+    if (!validTurnstile) {
+      return fail('Verificación de seguridad fallida. Intenta de nuevo.');
+    }
+  }
 
   // Sin sesión: los datos del checkout crean la cuenta y dejan al comprador
   // logueado, para que la orden quede a su nombre.
@@ -627,3 +665,132 @@ shopRoutes.get('/ordenes/:id/comprobante', requireAuth(), async (c) => {
     },
   });
 });
+
+/**
+ * Offline fallback page - serves cached catalog data
+ * This route is precached by the Service Worker
+ */
+shopRoutes.get('/tienda/offline', async (c) => {
+  const user = c.get('user');
+  const db = dbOf(c);
+  const rows = await db
+    .select()
+    .from(products)
+    .where(eq(products.active, true))
+    .orderBy(asc(products.sort), asc(products.name));
+  const cart = getCart(c);
+
+  const cards = rows
+    .map((p) => {
+      const sinStock = p.stock !== null && p.stock <= 0;
+      const stockHtml = sinStock
+        ? `<span class="pill" style="background:#ffffff;color:#18181b;border:1px solid #18181b">Sin stock</span>`
+        : p.stock === null
+        ? `<span class="pill">Disponible</span>`
+        : `<span class="pill">Disponible</span> <span class="muted">${p.stock} en stock</span>`;
+      // No forms on offline page - user can't add to cart while offline
+      return `<div class="card">
+        ${p.imageKey ? `<img src="/producto/${p.id}/imagen" alt="${escapeHtml(p.name)}" style="width:100%;max-height:12rem;object-fit:cover;border:1px solid var(--paper-border);border-radius:4px;margin-bottom:0.5rem" loading="lazy">` : ''}
+        <h2>${escapeHtml(p.name)}</h2>
+        <p class="muted">${escapeHtml(p.description)}</p>
+        <div class="row"><strong>${formatArs(p.priceCents)}</strong>${stockHtml}</div>
+      </div>`;
+    })
+    .join('');
+
+  return c.html(
+    page(
+      { title: 'Tienda (sin conexión)', brand: brandOf(c), user },
+      `<div class="card">
+        <h1>Tienda <span class="pill" style="background:#f59e0b;color:#fff">Sin conexión</span></h1>
+        <p class="muted">Estás navegando sin conexión a internet. Se muestran los productos guardados en caché.</p>
+        <p class="muted">Los cambios en el carrito se sincronizarán automáticamente cuando recuperes la conexión.</p>
+        <p><a href="/carrito">Ver carrito${escapeHtml(cartLink(cart))}</a></p>
+      </div>
+      ${cards || '<div class="card"><p class="muted">No hay productos cacheados disponibles.</p></div>'}`,
+    ),
+  );
+});
+
+/**
+ * Service Worker registration script - inline in tienda pages
+ * Only registers on /tienda* pages
+ */
+export function swRegistrationScript(): string {
+  return `
+<script>
+(function() {
+  if (!('serviceWorker' in navigator)) return;
+  if (!location.pathname.startsWith('/tienda')) return;
+  if (navigator.serviceWorker.controller) return; // Already controlled
+
+  var version = '${APP_VERSION}';
+  var swUrl = '/sw.js?v=' + encodeURIComponent(version);
+
+  navigator.serviceWorker.register(swUrl).then(function(reg) {
+    console.log('[SW] Registered:', reg.scope);
+
+    reg.addEventListener('updatefound', function() {
+      var newWorker = reg.installing;
+      if (!newWorker) return;
+      newWorker.addEventListener('statechange', function() {
+        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+          // New version available
+          showUpdateBanner();
+        }
+      });
+    });
+  }).catch(function(err) {
+    console.warn('[SW] Registration failed:', err);
+  });
+
+  // Listen for controller change (new SW took over)
+  var refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', function() {
+    if (refreshing) return;
+    refreshing = true;
+    window.location.reload();
+  });
+
+  // Online/offline detection
+  function updateOnlineStatus() {
+    var banner = document.getElementById('offline-banner');
+    if (!navigator.onLine) {
+      if (!banner) showOfflineBanner();
+    } else {
+      if (banner) banner.remove();
+      // Trigger background sync
+      if ('serviceWorker' in navigator && navigator.serviceWorker.ready) {
+        navigator.serviceWorker.ready.then(function(reg) {
+          if (reg.sync) reg.sync.register('cart-sync').catch(function() {});
+        });
+      }
+    }
+  }
+  window.addEventListener('online', updateOnlineStatus);
+  window.addEventListener('offline', updateOnlineStatus);
+  updateOnlineStatus();
+
+  function showOfflineBanner() {
+    var banner = document.createElement('div');
+    banner.id = 'offline-banner';
+    banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#f59e0b;color:#18181b;padding:0.75rem;text-align:center;font-weight:600;z-index:1000;box-shadow:0 -2px 8px rgba(0,0,0,0.15)';
+    banner.textContent = 'Estás sin conexión. Los cambios se sincronizarán al volver.';
+    document.body.appendChild(banner);
+  }
+
+  function showUpdateBanner() {
+    var banner = document.createElement('div');
+    banner.id = 'update-banner';
+    banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#0a0a0a;color:#fff;padding:0.75rem;text-align:center;font-weight:600;z-index:1000;box-shadow:0 -2px 8px rgba(0,0,0,0.15)';
+    banner.innerHTML = 'Nueva versión disponible. <button id="sw-update-btn" style="margin-left:1rem;padding:0.25rem 0.75rem;background:#fff;color:#0a0a0a;border:none;border-radius:0.25rem;font-weight:600;cursor:pointer">Actualizar</button>';
+    document.body.appendChild(banner);
+    document.getElementById('sw-update-btn').addEventListener('click', function() {
+      navigator.serviceWorker.ready.then(function(reg) {
+        reg.waiting?.postMessage({ type: 'SKIP_WAITING' });
+      });
+    });
+  }
+})();
+</script>`;
+}

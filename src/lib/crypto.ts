@@ -6,6 +6,12 @@ const KEY_BITS = 32;
 export const DEFAULT_PBKDF2_ITERATIONS = 30_000;
 export const MAX_PBKDF2_ITERATIONS = 100_000;
 
+// AES-GCM constants for MFA secret encryption
+const AES_ALGORITHM = 'AES-GCM';
+const AES_KEY_BITS = 256;
+const AES_IV_BYTES = 12;
+const AES_TAG_BITS = 128;
+
 export function iterationsFromEnv(env: { PBKDF2_ITERATIONS?: string }): number {
   const n = Number(env.PBKDF2_ITERATIONS);
   if (Number.isInteger(n) && n >= 1_000 && n <= MAX_PBKDF2_ITERATIONS) {
@@ -81,6 +87,95 @@ export async function verifyPassword(
     diff |= actual.charCodeAt(i) ^ expected.charCodeAt(i);
   }
   return diff === 0;
+}
+
+/**
+ * Derives an AES-GCM key from a secret (e.g., JWT_SECRET or MFA_SECRET).
+ * Uses PBKDF2 with a fixed salt for deterministic key derivation.
+ */
+async function deriveAesKey(secret: string): Promise<CryptoKey> {
+  // Use a fixed salt for deterministic key derivation from the secret
+  const salt = new TextEncoder().encode('gas-station-mfa-key-v1');
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(secret),
+    PBKDF2_ALGORITHM,
+    false,
+    ['deriveBits'],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: PBKDF2_ALGORITHM,
+      hash: HASH_NAME,
+      salt,
+      iterations: 100_000,
+    },
+    keyMaterial,
+    AES_KEY_BITS,
+  );
+  return crypto.subtle.importKey(
+    'raw',
+    bits,
+    { name: AES_ALGORITHM },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+}
+
+/**
+ * Encrypts a plaintext string using AES-GCM.
+ * Returns a base64-encoded string containing: IV + ciphertext + authTag
+ * Format: base64(iv || ciphertext || tag)
+ */
+export async function encryptSecret(
+  plaintext: string,
+  masterSecret: string,
+): Promise<string> {
+  const key = await deriveAesKey(masterSecret);
+  const iv = crypto.getRandomValues(new Uint8Array(AES_IV_BYTES));
+  const enc = new TextEncoder();
+  const ciphertext = await crypto.subtle.encrypt(
+    {
+      name: AES_ALGORITHM,
+      iv,
+      tagLength: AES_TAG_BITS,
+    },
+    key,
+    enc.encode(plaintext),
+  );
+  // Combine IV + ciphertext (which includes auth tag at the end for AES-GCM)
+  const combined = new Uint8Array(iv.length + ciphertext.byteLength);
+  combined.set(iv, 0);
+  combined.set(new Uint8Array(ciphertext), iv.length);
+  return b64encode(combined.buffer);
+}
+
+/**
+ * Decrypts a secret encrypted with encryptSecret.
+ * Returns the plaintext string.
+ */
+export async function decryptSecret(
+  encrypted: string,
+  masterSecret: string,
+): Promise<string> {
+  const key = await deriveAesKey(masterSecret);
+  const combined = b64decode(encrypted);
+  if (combined.length < AES_IV_BYTES + 1) {
+    throw new Error('Invalid encrypted data');
+  }
+  const iv = combined.slice(0, AES_IV_BYTES);
+  const ciphertext = combined.slice(AES_IV_BYTES);
+  const decrypted = await crypto.subtle.decrypt(
+    {
+      name: AES_ALGORITHM,
+      iv,
+      tagLength: AES_TAG_BITS,
+    },
+    key,
+    ciphertext,
+  );
+  return new TextDecoder().decode(decrypted);
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));

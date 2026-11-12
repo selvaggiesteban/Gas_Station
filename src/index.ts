@@ -10,6 +10,7 @@ import { shopRoutes } from './routes/shop';
 import { adminRoutes } from './routes/admin';
 import { rankingRoutes } from './routes/ranking';
 import { operativaRoutes } from './routes/operativa';
+import { turnstileRoutes } from './routes/turnstile';
 import { page, escapeHtml, LOGO_IMG } from './lib/html';
 import { configureEmail } from './lib/email';
 import { deleteExpiredSessions } from './lib/session';
@@ -139,6 +140,7 @@ app.route('/', shopRoutes);
 app.route('/', adminRoutes);
 app.route('/', rankingRoutes);
 app.route('/', operativaRoutes);
+app.route('/', turnstileRoutes);
 
 app.notFound((c) => c.json({ error: 'no encontrado' }, 404));
 

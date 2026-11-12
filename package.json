@@ -19,7 +19,8 @@
   },
   "dependencies": {
     "drizzle-orm": "^0.44.0",
-    "hono": "^4.7.0"
+    "hono": "^4.7.0",
+    "otplib": "^13.6.0"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.4.6",

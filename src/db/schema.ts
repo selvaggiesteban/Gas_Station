@@ -787,3 +787,45 @@ export const dailyActivitySummary = sqliteTable(
     storeIdx: index('daily_activity_summary_store_idx').on(t.storeId, t.reportDate),
   }),
 );
+
+export const mfaSecrets = sqliteTable(
+  'mfa_secrets',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    secret: text('secret').notNull(),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(false),
+    backupCodes: text('backup_codes').notNull().default('[]'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => ({
+    userIdUq: uniqueIndex('mfa_secrets_user_id_uq').on(t.userId),
+    userIdIdx: index('mfa_secrets_user_id_idx').on(t.userId),
+  }),
+);
+
+export const auditLogs = sqliteTable(
+  'audit_logs',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    action: text('action').notNull(),
+    resource: text('resource').notNull(),
+    resourceId: integer('resource_id'),
+    metadata: text('metadata').notNull().default('{}'),
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+    createdAt: createdAt(),
+  },
+  (t) => ({
+    userIdIdx: index('audit_logs_user_id_idx').on(t.userId),
+    resourceIdx: index('audit_logs_resource_idx').on(t.resource, t.resourceId),
+    createdAtIdx: index('audit_logs_created_at_idx').on(t.createdAt),
+    actionIdx: index('audit_logs_action_idx').on(t.action),
+  }),
+);

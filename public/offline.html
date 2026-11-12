@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sin conexión · LESCO GNC</title>
+<style>
+:root { color-scheme: light; --bg: #ffffff; --fg: #0a0a0a; --surface: #ffffff; --border: #e4e4e7; --muted: #71717a; --brand: #0a0a0a; --on-brand: #ffffff; --brand-contrast: #ffffff; --danger-bg: #18181b; --danger-fg: #ffffff; --danger-border: #18181b; --ok-bg: #f4f4f5; --ok-fg: #18181b; --ok-border: #a1a1aa; --paper-border: #e4e4e7; --paper-head: #f4f4f5; --paper-row-alt: #fafafa; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--fg); line-height: 1.5; }
+.wrap { max-width: 42rem; margin: 0 auto; padding: 1.5rem; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1.25rem; margin-bottom: 1rem; overflow-x: auto; }
+h1 { font-size: 1.35rem; margin: 0 0 0.75rem; }
+h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+.muted { color: var(--muted); font-size: 0.875rem; }
+.row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
+.pill { background: var(--brand); color: var(--on-brand); border-radius: 999px; padding: 0.1rem 0.6rem; font-size: 0.8rem; font-weight: 700; }
+.btn { display: inline-block; margin-top: 1rem; padding: 0.6rem 1.1rem; border: 0; border-radius: 0.5rem; background: var(--brand); color: var(--on-brand); font: inherit; font-weight: 600; cursor: pointer; text-decoration: none; }
+.btn:hover { opacity: 0.85; }
+.btn.secondary { background: #3f3f46; color: #ffffff; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="card">
+<h1>Estás sin conexión</h1>
+<p class="muted">No hay internet disponible. Se muestran a continuación los productos guardados en caché.</p>
+<div id="cached-products" class="muted">Cargando productos guardados…</div>
+<a class="btn" href="/tienda" onclick="return navigator.onLine">Reintentar conexión</a>
+</div>
+</div>
+<script>
+(function() {
+  'use strict';
+  
+  async function loadCachedProducts() {
+    try {
+      // Try to get the cache version from the SW registration
+      var cacheName = 'lesco-vdev';
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        // Try to get version from SW
+        try {
+          var reg = await navigator.serviceWorker.ready;
+          // Version might be in scope or we can message the SW
+        } catch (e) {}
+      }
+      
+      // Try common cache names
+      var cacheNames = await caches.keys();
+      var lescoCache = cacheNames.find(function(name) { return name.startsWith('lesco-v'); });
+      
+      if (!lescoCache) {
+        document.getElementById('cached-products').textContent = 'No hay caché de productos disponible.';
+        return;
+      }
+      
+      var cache = await caches.open(lescoCache);
+      var res = await cache.match('/tienda');
+      
+      if (!res) {
+        document.getElementById('cached-products').textContent = 'No hay productos cacheados.';
+        return;
+      }
+      
+      var html = await res.text();
+      var parser = new DOMParser();
+      var doc = parser.parseFromString(html, 'text/html');
+      var cards = doc.querySelectorAll('.card');
+      
+      if (cards.length > 1) {
+        // Skip the first card (header) and show product cards
+        var productsHtml = Array.from(cards).slice(1).map(function(c) { return c.outerHTML; }).join('');
+        document.getElementById('cached-products').innerHTML = productsHtml;
+      } else {
+        document.getElementById('cached-products').textContent = 'No hay productos cacheados disponibles.';
+      }
+    } catch (e) {
+      console.error('Error loading cached products:', e);
+      document.getElementById('cached-products').textContent = 'Error cargando productos cacheados.';
+    }
+  }
+  
+  // Load cached products when page loads
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', loadCachedProducts);
+  } else {
+    loadCachedProducts();
+  }
+  
+  // Also listen for online event to redirect
+  window.addEventListener('online', function() {
+    window.location.href = '/tienda';
+  });
+})();
+</script>
+</body>
+</html>

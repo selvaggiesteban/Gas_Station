@@ -5,14 +5,18 @@ import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { AppEnv } from '../env';
 import type { Db } from '../db';
-import { dbOf, brandOf, requireRole } from '../middleware/auth';
+import { dbOf, brandOf, requireRole, requireMFA, auditLog } from '../middleware/auth';
+import { adminRateLimit } from '../middleware/rate-limit';
 import { page, escapeHtml } from '../lib/html';
+import { encryptSecret, decryptSecret } from '../lib/crypto';
 import {
   GOAL_TYPE_VALUES,
   ORDER_STATUS_VALUES,
   ROLE_VALUES,
   announcements,
+  auditLogs,
   cashDays,
+  mfaSecrets,
   notifications,
   orderItems,
   orders,
@@ -36,6 +40,7 @@ import {
   restoreStock,
   sanitizeFilename,
 } from '../services/orders';
+import { generateSecret, verify, generateURI } from 'otplib';
 
 type Role = (typeof ROLE_VALUES)[number];
 type GoalType = (typeof GOAL_TYPE_VALUES)[number];
@@ -199,6 +204,9 @@ function notFoundBody(volver: string): string {
 
 export const adminRoutes = new Hono<AppEnv>();
 
+// Apply audit logging to all admin routes (after auth middleware)
+adminRoutes.use('/admin/*', auditLog());
+
 // El playero (store_manager) solo entra a las rutas de órdenes:
 // listado, detalle, comprobante y nueva orden. Aprobar/rechazar es solo admin.
 const PLAYERO_ADMIN_PATHS = [
@@ -217,6 +225,9 @@ adminRoutes.use('/admin/*', async (c, next) => {
   }
   return requireRole('admin')(c, next);
 });
+
+// Rate limiting for admin routes: 100 requests/minute per authenticated user
+adminRoutes.use('/admin*', adminRateLimit);
 
 // ---------------------------------------------------------------- dashboard
 
@@ -462,7 +473,8 @@ adminRoutes.post('/admin/usuarios/:id/editar', async (c) => {
   return c.redirect(avisado('/admin/usuarios'));
 });
 
-adminRoutes.post('/admin/usuarios/:id/eliminar', async (c) => {
+// Require MFA for deleting users
+adminRoutes.post('/admin/usuarios/:id/eliminar', requireMFA(), async (c) => {
   const id = parseIdParam(c.req.param('id'));
   if (!id) {
     return render(c, 'Usuarios', notFoundBody('/admin/usuarios'), {
@@ -940,7 +952,8 @@ adminRoutes.get('/admin/tienda/productos/:id/editar', async (c) => {
   );
 });
 
-adminRoutes.post('/admin/tienda/productos/:id/editar', async (c) => {
+// Require MFA for editing products (price changes)
+adminRoutes.post('/admin/tienda/productos/:id/editar', requireMFA(), async (c) => {
   const id = parseIdParam(c.req.param('id'));
   if (!id) {
     return render(c, 'Tienda', notFoundBody('/admin/tienda'), { status: 404 });
@@ -1048,7 +1061,8 @@ adminRoutes.post('/admin/tienda/productos/:id/editar', async (c) => {
   return c.redirect(avisado('/admin/tienda'));
 });
 
-adminRoutes.post('/admin/tienda/productos/:id/activo', async (c) => {
+// Require MFA for toggling product active status
+adminRoutes.post('/admin/tienda/productos/:id/activo', requireMFA(), async (c) => {
   const id = parseIdParam(c.req.param('id'));
   if (!id) {
     return render(c, 'Tienda', notFoundBody('/admin/tienda'), { status: 404 });
@@ -1816,7 +1830,8 @@ adminRoutes.get('/admin/comprobantes/:id', async (c) => {
   });
 });
 
-adminRoutes.post('/admin/ordenes/:id/aprobar', async (c) => {
+// Require MFA for approving orders
+adminRoutes.post('/admin/ordenes/:id/aprobar', requireMFA(), async (c) => {
   const id = parseIdParam(c.req.param('id'));
   if (!id) {
     return render(c, 'Ordenes', notFoundBody('/admin/ordenes'), {
@@ -1845,7 +1860,8 @@ adminRoutes.post('/admin/ordenes/:id/aprobar', async (c) => {
   return c.redirect(`/admin/ordenes/${id}?aviso=aprobada`);
 });
 
-adminRoutes.post('/admin/ordenes/:id/rechazar', async (c) => {
+// Require MFA for rejecting orders
+adminRoutes.post('/admin/ordenes/:id/rechazar', requireMFA(), async (c) => {
   const id = parseIdParam(c.req.param('id'));
   if (!id) {
     return render(c, 'Ordenes', notFoundBody('/admin/ordenes'), {
@@ -1878,4 +1894,517 @@ adminRoutes.post('/admin/ordenes/:id/rechazar', async (c) => {
     });
   }
   return c.redirect(`/admin/ordenes/${id}?aviso=rechazada`);
+});
+
+// ========================================================================
+// MFA Admin Routes
+// ========================================================================
+
+/**
+ * GET /admin/mfa/setup - Show MFA setup page with QR code
+ */
+adminRoutes.get('/admin/mfa/setup', requireRole('admin'), async (c) => {
+  const user = c.get('user')!;
+  const db = dbOf(c);
+
+  const existing = await db
+    .select()
+    .from(mfaSecrets)
+    .where(eq(mfaSecrets.userId, user.id))
+    .limit(1);
+
+  if (existing[0]?.enabled) {
+    return c.redirect('/admin/mfa/setup?aviso=already_enabled');
+  }
+
+  // Generate a new secret if none exists
+  let secret: string;
+  if (existing[0]?.secret) {
+    secret = await decryptSecret(existing[0].secret, c.env.JWT_SECRET || c.env.MFA_SECRET || 'default-secret-change-me');
+  } else {
+    secret = generateSecret();
+  }
+
+  // Generate QR code URI
+  const serviceName = c.env.BRAND_NAME || 'LESCO GNC';
+  const otpauth = generateURI({ label: user.email, issuer: serviceName, secret, algorithm: 'sha1', digits: 6, period: 30 });
+
+  // Generate backup codes
+  const backupCodes = Array.from({ length: 8 }, () =>
+    Math.random().toString(36).substring(2, 10).toUpperCase()
+  );
+
+  // Store secret (encrypted) and backup codes (hashed) temporarily in session or return to user
+  // For setup, we show the QR code and backup codes, user verifies with a code to enable
+  const encryptedSecret = await encryptSecret(secret, c.env.JWT_SECRET || c.env.MFA_SECRET || 'default-secret-change-me');
+
+  // Upsert mfa_secrets with the new secret (not enabled yet)
+  await db
+    .insert(mfaSecrets)
+    .values({
+      userId: user.id,
+      secret: encryptedSecret,
+      enabled: false,
+      backupCodes: JSON.stringify(backupCodes),
+    })
+    .onConflictDoUpdate({
+      target: mfaSecrets.userId,
+      set: {
+        secret: encryptedSecret,
+        backupCodes: JSON.stringify(backupCodes),
+        updatedAt: new Date(),
+      },
+    });
+
+  const aviso = c.req.query('aviso');
+  const notice = aviso === 'already_enabled' ? 'MFA ya está habilitado.' : undefined;
+  const error = aviso === 'invalid_code' ? 'Código inválido. Intenta de nuevo.' : undefined;
+
+  return c.html(
+    page(
+      {
+        title: 'Configurar MFA (TOTP)',
+        brand: brandOf(c),
+        user,
+        notice,
+        error,
+      },
+      `<div class="card">
+        <h1>Configurar Autenticación de Dos Factores (TOTP)</h1>
+        <p class="muted">Escanea este código QR con tu app de autenticación (Google Authenticator, Authy, 1Password, etc.)</p>
+        <div style="text-align:center;margin:1.5rem 0">
+          <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(otpauth)}" alt="QR Code para MFA" style="border:1px solid var(--paper-border);border-radius:8px;background:white;padding:1rem">
+        </div>
+        <p class="muted"><strong>Secreto manual:</strong> <code style="font-size:0.9rem;background:var(--paper-head);padding:0.25rem 0.5rem;border-radius:4px">${escapeHtml(secret)}</code></p>
+
+        <div class="card" style="margin-top:1.5rem">
+          <h2>Códigos de respaldo</h2>
+          <p class="muted">Guarda estos códigos en un lugar seguro. Cada uno se puede usar una sola vez si pierdes acceso a tu app de autenticación.</p>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:0.5rem;margin-top:1rem">
+            ${backupCodes.map((code) => `<code style="background:var(--paper-head);padding:0.5rem;border-radius:4px;display:block;text-align:center;font-size:1rem;letter-spacing:0.1em">${escapeHtml(code)}</code>`).join('')}
+          </div>
+        </div>
+
+        <form method="post" action="/admin/mfa/setup" style="margin-top:1.5rem">
+          <label for="totp-code">Código de 6 dígitos de tu app</label>
+          <input id="totp-code" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="one-time-code" placeholder="123456" style="text-align:center;font-size:1.5rem;letter-spacing:0.5em">
+          <button type="submit" style="margin-top:1rem">Activar MFA</button>
+          <a class="btn secondary" href="/admin" style="margin-top:1rem;display:inline-block">Cancelar</a>
+        </form>
+      </div>`,
+    ),
+  );
+});
+
+/**
+ * POST /admin/mfa/setup - Verify TOTP code and enable MFA
+ */
+adminRoutes.post('/admin/mfa/setup', requireRole('admin'), async (c) => {
+  const user = c.get('user')!;
+  const db = dbOf(c);
+  const body = await c.req.parseBody();
+  const code = str(body.code);
+
+  if (!/^\d{6}$/.test(code)) {
+    return c.redirect('/admin/mfa/setup?aviso=invalid_code');
+  }
+
+  const mfa = await db
+    .select()
+    .from(mfaSecrets)
+    .where(eq(mfaSecrets.userId, user.id))
+    .limit(1);
+
+  if (!mfa[0] || !mfa[0].secret) {
+    return c.redirect('/admin/mfa/setup?aviso=invalid_code');
+  }
+
+  const secret = await decryptSecret(mfa[0].secret, c.env.JWT_SECRET || c.env.MFA_SECRET || 'default-secret-change-me');
+  const verified = verify({ token: code, secret });
+
+  if (!verified) {
+    return c.redirect('/admin/mfa/setup?aviso=invalid_code');
+  }
+
+  // Enable MFA
+  await db
+    .update(mfaSecrets)
+    .set({ enabled: true, updatedAt: new Date() })
+    .where(eq(mfaSecrets.userId, user.id));
+
+  return c.redirect('/admin/mfa/setup?aviso=enabled');
+});
+
+/**
+ * GET /admin/mfa/verify - MFA verification page for sensitive actions
+ */
+adminRoutes.get('/admin/mfa/verify', requireRole('admin'), async (c) => {
+  const user = c.get('user')!;
+  const redirect = c.req.query('redirect') || '/admin';
+
+  const db = dbOf(c);
+  const mfa = await db
+    .select()
+    .from(mfaSecrets)
+    .where(eq(mfaSecrets.userId, user.id))
+    .limit(1);
+
+  if (!mfa[0] || !mfa[0].enabled) {
+    // MFA not enabled, allow through
+    return c.redirect(redirect);
+  }
+
+  const error = c.req.query('error');
+
+  return c.html(
+    page(
+      {
+        title: 'Verificación MFA',
+        brand: brandOf(c),
+        user,
+        error: error === 'invalid' ? 'Código inválido o expirado.' : undefined,
+      },
+      `<div class="card" style="max-width:24rem;margin:0 auto">
+        <h1>Verificación de Dos Factores</h1>
+        <p class="muted">Ingresa el código de 6 dígitos de tu app de autenticación para continuar.</p>
+        <form method="post" action="/admin/mfa/verify">
+          <input type="hidden" name="redirect" value="${escapeHtml(redirect)}">
+          <label for="totp-code">Código</label>
+          <input id="totp-code" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autocomplete="one-time-code" placeholder="123456" style="text-align:center;font-size:1.5rem;letter-spacing:0.5em">
+          <button type="submit" style="margin-top:1rem;width:100%">Verificar</button>
+        </form>
+        <p class="muted" style="margin-top:1rem"><a href="/admin/mfa/verify/backup?redirect=${encodeURIComponent(redirect)}">Usar código de respaldo</a></p>
+      </div>`,
+    ),
+  );
+});
+
+/**
+ * POST /admin/mfa/verify - Verify TOTP code for sensitive action
+ */
+adminRoutes.post('/admin/mfa/verify', requireRole('admin'), async (c) => {
+  const user = c.get('user')!;
+  const body = await c.req.parseBody();
+  const code = str(body.code);
+  const redirect = str(body.redirect) || '/admin';
+
+  if (!/^\d{6}$/.test(code)) {
+    return c.redirect(`/admin/mfa/verify?redirect=${encodeURIComponent(redirect)}&error=invalid`);
+  }
+
+  const db = dbOf(c);
+  const mfa = await db
+    .select()
+    .from(mfaSecrets)
+    .where(eq(mfaSecrets.userId, user.id))
+    .limit(1);
+
+  if (!mfa[0] || !mfa[0].enabled || !mfa[0].secret) {
+    return c.redirect(`/admin/mfa/verify?redirect=${encodeURIComponent(redirect)}&error=invalid`);
+  }
+
+  const secret = await decryptSecret(mfa[0].secret, c.env.JWT_SECRET || c.env.MFA_SECRET || 'default-secret-change-me');
+  const verified = verify({ token: code, secret });
+
+  if (!verified) {
+    // Check backup codes
+    const backupCodes = JSON.parse(mfa[0].backupCodes || '[]') as string[];
+    const codeUpper = code.toUpperCase();
+    const idx = backupCodes.indexOf(codeUpper);
+    if (idx !== -1) {
+      // Valid backup code - remove it and allow
+      backupCodes.splice(idx, 1);
+      await db
+        .update(mfaSecrets)
+        .set({ backupCodes: JSON.stringify(backupCodes), updatedAt: new Date() })
+        .where(eq(mfaSecrets.userId, user.id));
+      c.set('mfaVerified', true);
+      return c.redirect(redirect);
+    }
+    return c.redirect(`/admin/mfa/verify?redirect=${encodeURIComponent(redirect)}&error=invalid`);
+  }
+
+  // Set MFA verified flag in context for requireMFA middleware
+  c.set('mfaVerified', true);
+  return c.redirect(redirect);
+});
+
+/**
+ * GET /admin/mfa/verify/backup - Backup code verification page
+ */
+adminRoutes.get('/admin/mfa/verify/backup', requireRole('admin'), async (c) => {
+  const redirect = c.req.query('redirect') || '/admin';
+  const error = c.req.query('error');
+
+  return c.html(
+    page(
+      {
+        title: 'Código de Respaldo MFA',
+        brand: brandOf(c),
+        user: c.get('user'),
+        error: error === 'invalid' ? 'Código de respaldo inválido o ya usado.' : undefined,
+      },
+      `<div class="card" style="max-width:24rem;margin:0 auto">
+        <h1>Código de Respaldo</h1>
+        <p class="muted">Ingresa uno de tus códigos de respaldo para continuar.</p>
+        <form method="post" action="/admin/mfa/verify/backup">
+          <input type="hidden" name="redirect" value="${escapeHtml(redirect)}">
+          <label for="backup-code">Código de respaldo</label>
+          <input id="backup-code" name="code" type="text" required autocomplete="one-time-code" placeholder="ABC123XY" style="text-align:center;font-size:1.2rem;letter-spacing:0.2em;text-transform:uppercase">
+          <button type="submit" style="margin-top:1rem;width:100%">Verificar</button>
+        </form>
+        <p class="muted" style="margin-top:1rem"><a href="/admin/mfa/verify?redirect=${encodeURIComponent(redirect)}">Volver a app de autenticación</a></p>
+      </div>`,
+    ),
+  );
+});
+
+/**
+ * POST /admin/mfa/verify/backup - Verify backup code
+ */
+adminRoutes.post('/admin/mfa/verify/backup', requireRole('admin'), async (c) => {
+  const user = c.get('user')!;
+  const body = await c.req.parseBody();
+  const code = str(body.code).toUpperCase();
+  const redirect = str(body.redirect) || '/admin';
+
+  const db = dbOf(c);
+  const mfa = await db
+    .select()
+    .from(mfaSecrets)
+    .where(eq(mfaSecrets.userId, user.id))
+    .limit(1);
+
+  if (!mfa[0] || !mfa[0].enabled) {
+    return c.redirect(`/admin/mfa/verify/backup?redirect=${encodeURIComponent(redirect)}&error=invalid`);
+  }
+
+  const backupCodes = JSON.parse(mfa[0].backupCodes || '[]') as string[];
+  const idx = backupCodes.indexOf(code);
+
+  if (idx === -1) {
+    return c.redirect(`/admin/mfa/verify/backup?redirect=${encodeURIComponent(redirect)}&error=invalid`);
+  }
+
+  // Remove used backup code
+  backupCodes.splice(idx, 1);
+  await db
+    .update(mfaSecrets)
+    .set({ backupCodes: JSON.stringify(backupCodes), updatedAt: new Date() })
+    .where(eq(mfaSecrets.userId, user.id));
+
+  c.set('mfaVerified', true);
+  return c.redirect(redirect);
+});
+
+/**
+ * POST /admin/mfa/disable - Disable MFA (requires current code)
+ */
+adminRoutes.post('/admin/mfa/disable', requireRole('admin'), async (c) => {
+  const user = c.get('user')!;
+  const body = await c.req.parseBody();
+  const code = str(body.code);
+
+  if (!/^\d{6}$/.test(code)) {
+    return c.redirect('/admin/mfa/setup?aviso=invalid_disable_code');
+  }
+
+  const db = dbOf(c);
+  const mfa = await db
+    .select()
+    .from(mfaSecrets)
+    .where(eq(mfaSecrets.userId, user.id))
+    .limit(1);
+
+  if (!mfa[0] || !mfa[0].enabled || !mfa[0].secret) {
+    return c.redirect('/admin/mfa/setup?aviso=invalid_disable_code');
+  }
+
+  const secret = await decryptSecret(mfa[0].secret, c.env.JWT_SECRET || c.env.MFA_SECRET || 'default-secret-change-me');
+  const verified = verify({ token: code, secret });
+
+  if (!verified) {
+    // Check backup codes
+    const backupCodes = JSON.parse(mfa[0].backupCodes || '[]') as string[];
+    const codeUpper = code.toUpperCase();
+    const idx = backupCodes.indexOf(codeUpper);
+    if (idx === -1) {
+      return c.redirect('/admin/mfa/setup?aviso=invalid_disable_code');
+    }
+    backupCodes.splice(idx, 1);
+    await db
+      .update(mfaSecrets)
+      .set({ backupCodes: JSON.stringify(backupCodes), updatedAt: new Date() })
+      .where(eq(mfaSecrets.userId, user.id));
+  }
+
+  // Disable MFA
+  await db
+    .update(mfaSecrets)
+    .set({ enabled: false, updatedAt: new Date() })
+    .where(eq(mfaSecrets.userId, user.id));
+
+  return c.redirect('/admin/mfa/setup?aviso=disabled');
+});
+
+// ========================================================================
+// Audit Log Routes
+// ========================================================================
+
+/**
+ * GET /admin/audit-logs - List audit logs with filters
+ */
+adminRoutes.get('/admin/audit-logs', requireRole('admin'), async (c) => {
+  const db = dbOf(c);
+
+  const userIdRaw = Number(str(c.req.query('userId')));
+  const userId = Number.isInteger(userIdRaw) && userIdRaw > 0 ? userIdRaw : null;
+
+  const action = str(c.req.query('action'));
+  const resource = str(c.req.query('resource'));
+  const dateFromRaw = str(c.req.query('dateFrom'));
+  const dateToRaw = str(c.req.query('dateTo'));
+  const pageRaw = Number(str(c.req.query('page')));
+  const pageNum = Number.isInteger(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+  const PAGE_SIZE = 50;
+
+  const conds: SQL[] = [];
+  if (userId) conds.push(eq(auditLogs.userId, userId));
+  if (action) conds.push(like(auditLogs.action, `%${action}%`));
+  if (resource) conds.push(eq(auditLogs.resource, resource));
+  if (dateFromRaw) {
+    const dateFrom = new Date(dateFromRaw);
+    if (!Number.isNaN(dateFrom.getTime())) {
+      conds.push(sql`${auditLogs.createdAt} >= ${dateFrom.getTime()}`);
+    }
+  }
+  if (dateToRaw) {
+    const dateTo = new Date(dateToRaw);
+    dateTo.setHours(23, 59, 59, 999);
+    if (!Number.isNaN(dateTo.getTime())) {
+      conds.push(sql`${auditLogs.createdAt} <= ${dateTo.getTime()}`);
+    }
+  }
+
+  const where = conds.length > 0 ? and(...conds) : undefined;
+
+  const totalRows = await db
+    .select({ n: count() })
+    .from(auditLogs)
+    .where(where);
+  const total = totalRows[0]?.n ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  const rows = await db
+    .select({
+      id: auditLogs.id,
+      userId: auditLogs.userId,
+      action: auditLogs.action,
+      resource: auditLogs.resource,
+      resourceId: auditLogs.resourceId,
+      metadata: auditLogs.metadata,
+      ip: auditLogs.ip,
+      userAgent: auditLogs.userAgent,
+      createdAt: auditLogs.createdAt,
+      userName: users.name,
+      userEmail: users.email,
+    })
+    .from(auditLogs)
+    .innerJoin(users, eq(auditLogs.userId, users.id))
+    .where(where)
+    .orderBy(desc(auditLogs.createdAt), desc(auditLogs.id))
+    .limit(PAGE_SIZE)
+    .offset((pageNum - 1) * PAGE_SIZE);
+
+  // Get list of users for filter dropdown
+  const userRows = await db
+    .select({ id: users.id, name: users.name, email: users.email })
+    .from(users)
+    .orderBy(users.name);
+
+  const bodyRows = rows
+    .map(
+      (log) => `<tr>
+        <td style="${TD}">${fmtFecha(log.createdAt)}</td>
+        <td style="${TD}">${escapeHtml(log.userName)}<br><span class="muted">${escapeHtml(log.userEmail)}</span></td>
+        <td style="${TD}"><code style="font-size:0.8rem">${escapeHtml(log.action)}</code></td>
+        <td style="${TD}">${escapeHtml(log.resource)}${log.resourceId ? ` #${log.resourceId}` : ''}</td>
+        <td style="${TD}"><pre style="margin:0;font-size:0.7rem;max-height:8rem;overflow:auto">${escapeHtml(log.metadata ?? '{}')}</pre></td>
+        <td style="${TD}">${escapeHtml(log.ip ?? 'unknown')}</td>
+      </tr>`,
+    )
+    .join('');
+
+  const userOptions = userRows
+    .map(
+      (u) => `<option value="${u.id}"${u.id === userId ? ' selected' : ''}>${escapeHtml(u.name)} (${escapeHtml(u.email)})</option>`,
+    )
+    .join('');
+
+  const resourceOptions = ['usuarios', 'tienda', 'desafios', 'ordenes', 'productos', 'mfa', 'audit-logs']
+    .map((r) => `<option value="${r}"${r === resource ? ' selected' : ''}>${r}</option>`)
+    .join('');
+
+  const filtros: Record<string, string> = {};
+  if (userId) filtros.userId = String(userId);
+  if (action) filtros.action = action;
+  if (resource) filtros.resource = resource;
+  if (dateFromRaw) filtros.dateFrom = dateFromRaw;
+  if (dateToRaw) filtros.dateTo = dateToRaw;
+
+  const qs = new URLSearchParams(filtros).toString();
+  const basePath = `/admin/audit-logs${qs ? `?${qs}` : ''}`;
+
+  const paginacion =
+    totalPages > 1
+      ? `<div class="row" style="margin-top:0.75rem">
+          ${pageNum > 1 ? `<a class="btn secondary" href="${basePath}&page=${pageNum - 1}" style="${SMALL_BTN}">Anterior</a>` : ''}
+          <span class="muted">Página ${pageNum} de ${totalPages}</span>
+          ${pageNum < totalPages ? `<a class="btn secondary" href="${basePath}&page=${pageNum + 1}" style="${SMALL_BTN}">Siguiente</a>` : ''}
+        </div>`
+      : '';
+
+  return c.html(
+    page(
+      {
+        title: 'Log de Auditoría',
+        brand: brandOf(c),
+        user: c.get('user'),
+      },
+      `<div class="card">
+        <h1>Log de Auditoría</h1>
+        <p class="muted">Registro de acciones administrativas (solo POST, PUT, DELETE, PATCH en /admin/*)</p>
+        <form method="get" action="/admin/audit-logs" class="row" style="margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem">
+          <select name="userId" style="width:auto;min-width:12rem">
+            <option value="">Todos los usuarios</option>
+            ${userOptions}
+          </select>
+          <select name="resource" style="width:auto;min-width:10rem">
+            <option value="">Todos los recursos</option>
+            ${resourceOptions}
+          </select>
+          <input type="search" name="action" value="${escapeHtml(action)}" placeholder="Acción (método + ruta)" style="flex:1;min-width:12rem">
+          <input type="date" name="dateFrom" value="${escapeHtml(dateFromRaw)}" style="width:auto">
+          <input type="date" name="dateTo" value="${escapeHtml(dateToRaw)}" style="width:auto">
+          <button type="submit" style="${SMALL_BTN}">Filtrar</button>
+          <a class="btn secondary" href="/admin/audit-logs" style="${SMALL_BTN}">Limpiar</a>
+        </form>
+        <p class="muted">${total} registro${total === 1 ? '' : 's'}</p>
+        <div style="overflow-x:auto">
+          <table class="papel" style="margin-top:0.5rem">
+            <thead><tr>
+              <th style="${TH}">Fecha</th>
+              <th style="${TH}">Usuario</th>
+              <th style="${TH}">Acción</th>
+              <th style="${TH}">Recurso</th>
+              <th style="${TH}">Metadata</th>
+              <th style="${TH}">IP</th>
+            </tr></thead>
+            <tbody>${bodyRows || `<tr><td colspan="6" style="${TD}" class="muted">No hay registros para mostrar.</td></tr>`}</tbody>
+          </table>
+        </div>
+        ${paginacion}
+      </div>`,
+    ),
+  );
 });

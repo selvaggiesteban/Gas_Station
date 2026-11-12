@@ -3,6 +3,7 @@ import type { Context } from 'hono';
 import { eq } from 'drizzle-orm';
 import type { AppEnv } from '../env';
 import { dbOf, brandOf } from '../middleware/auth';
+import { loginRateLimit, registerRateLimit } from '../middleware/rate-limit';
 import { users, passwordResetTokens } from '../db/schema';
 import {
   hashPassword,
@@ -37,10 +38,35 @@ function randomHex(bytes = 32): string {
   return Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * Verify a Turnstile token by calling the internal verification endpoint.
+ * Returns true if valid, false otherwise.
+ */
+async function verifyTurnstile(c: Context<AppEnv>, token: string | undefined, action: string): Promise<boolean> {
+  if (!token || typeof token !== 'string' || token.length === 0) {
+    return false;
+  }
+  try {
+    const response = await fetch(new URL('/turnstile/verify', c.req.url).toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, action }),
+    });
+    const result = await response.json() as { success?: boolean };
+    return result.success === true;
+  } catch {
+    return false;
+  }
+}
+
 function loginForm(
   c: Context<AppEnv>,
   opts: { error?: string; notice?: string } = {},
 ): Response {
+  const siteKey = c.env.TURNSTILE_SITE_KEY || '';
+  const turnstileHtml = siteKey
+    ? `<div class="cf-turnstile" data-sitekey="${escapeHtml(siteKey)}" data-action="login" data-theme="light"></div>`
+    : '';
   return c.html(
     page(
       {
@@ -56,6 +82,7 @@ function loginForm(
           <input id="email" name="email" type="email" required autocomplete="email">
           <label for="password">Contraseña</label>
           <input id="password" name="password" type="password" required autocomplete="current-password">
+          ${turnstileHtml}
           <button type="submit">Accedé</button>
         </form>
         <p class="muted"><a href="/olvide-contrasena">¿Olvidaste tu contraseña?</a> ·
@@ -70,6 +97,10 @@ function registerForm(
   c: Context<AppEnv>,
   opts: { error?: string } = {},
 ): Response {
+  const siteKey = c.env.TURNSTILE_SITE_KEY || '';
+  const turnstileHtml = siteKey
+    ? `<div class="cf-turnstile" data-sitekey="${escapeHtml(siteKey)}" data-action="register" data-theme="light"></div>`
+    : '';
   return c.html(
     page(
       {
@@ -88,6 +119,7 @@ function registerForm(
           <input id="password" name="password" type="password" required minlength="8" autocomplete="new-password">
           <label for="password2">Repetí la contraseña</label>
           <input id="password2" name="password2" type="password" required minlength="8" autocomplete="new-password">
+          ${turnstileHtml}
           <button type="submit">Creá tu cuenta</button>
         </form>
         <p class="muted"><a href="/login">¿Ya tenés cuenta? Accedé</a></p>
@@ -103,10 +135,20 @@ authRoutes.get('/login', (c) => {
   return loginForm(c, { notice: notice ? 'Contraseña actualizada. Accedé de nuevo.' : undefined });
 });
 
-authRoutes.post('/login', async (c) => {
+authRoutes.post('/login', loginRateLimit, async (c) => {
   const body = await c.req.parseBody();
   const email = lowerEmail(body.email);
   const password = str(body.password);
+  const turnstileToken = str(body['cf-turnstile-response']);
+
+  // Verify Turnstile if configured
+  if (c.env.TURNSTILE_SECRET_KEY) {
+    const validTurnstile = await verifyTurnstile(c, turnstileToken, 'login');
+    if (!validTurnstile) {
+      return loginForm(c, { error: 'Verificación de seguridad fallida. Intenta de nuevo.' });
+    }
+  }
+
   if (!email || !password) {
     return loginForm(c, { error: 'Completá el email y la contraseña.' });
   }
@@ -140,12 +182,21 @@ authRoutes.get('/registro', (c) => {
   return registerForm(c);
 });
 
-authRoutes.post('/registro', async (c) => {
+authRoutes.post('/registro', registerRateLimit, async (c) => {
   const body = await c.req.parseBody();
   const nombre = str(body.nombre);
   const email = lowerEmail(body.email);
   const password = str(body.password);
   const password2 = str(body.password2);
+  const turnstileToken = str(body['cf-turnstile-response']);
+
+  // Verify Turnstile if configured
+  if (c.env.TURNSTILE_SECRET_KEY) {
+    const validTurnstile = await verifyTurnstile(c, turnstileToken, 'register');
+    if (!validTurnstile) {
+      return registerForm(c, { error: 'Verificación de seguridad fallida. Intenta de nuevo.' });
+    }
+  }
 
   if (nombre.length < 2) {
     return registerForm(c, { error: 'Ingresá tu nombre (mínimo 2 letras).' });

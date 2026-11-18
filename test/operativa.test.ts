@@ -923,3 +923,53 @@ describe('operativa', () => {
     expect(html2).toContain(formatArs(2420050));
   });
 });
+
+describe('impresión PDF (endpoints /print)', () => {
+  async function expectPdf(res: Response, filename: string) {
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('application/pdf');
+    expect(res.headers.get('content-disposition')).toContain(filename);
+    const buf = new Uint8Array(await res.arrayBuffer());
+    const magic = String.fromCharCode(buf[0] ?? 0, buf[1] ?? 0, buf[2] ?? 0, buf[3] ?? 0);
+    expect(magic).toBe('%PDF');
+    expect(buf.byteLength).toBeGreaterThan(500);
+  }
+
+  it('GET /operativa/actividades/print devuelve PDF (landscape) para admin', async () => {
+    const cookie = await registerAs('Admin Print Act', uniqueEmail('admin-print-act'), 'admin');
+    const res = await get('/operativa/actividades/print?fecha=2026-11-18', cookie);
+    await expectPdf(res, 'resumen-diario-2026-11-18.pdf');
+  });
+
+  it('GET /operativa/caja/print devuelve PDF (portrait) para admin', async () => {
+    const cookie = await registerAs('Admin Print Caja', uniqueEmail('admin-print-caja'), 'admin');
+    const res = await get('/operativa/caja/print?fecha=2026-11-18', cookie);
+    await expectPdf(res, 'caja-diaria-2026-11-18.pdf');
+  });
+
+  it('GET /operativa/actividades/print sin sesión redirige a login', async () => {
+    const res = await get('/operativa/actividades/print?fecha=2026-11-18');
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/login');
+  });
+
+  it('GET /operativa/caja/print sin sesión redirige a login', async () => {
+    const res = await get('/operativa/caja/print?fecha=2026-11-18');
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/login');
+  });
+
+  it('GET /operativa/actividades/print con rol playero devuelve 403', async () => {
+    const cookie = await registerAs('Playero Print', uniqueEmail('playero-print'), 'store_manager');
+    const res = await get('/operativa/actividades/print?fecha=2026-11-18', cookie);
+    expect(res.status).toBe(403);
+    const html = await res.text();
+    expect(html).toContain('No tenés permiso');
+  });
+
+  it('GET /operativa/caja/print con rol cliente devuelve 403', async () => {
+    const cookie = await registerAs('Cliente Print', uniqueEmail('cliente-print'), 'customer');
+    const res = await get('/operativa/caja/print?fecha=2026-11-18', cookie);
+    expect(res.status).toBe(403);
+  });
+});

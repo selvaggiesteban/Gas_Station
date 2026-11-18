@@ -2482,7 +2482,7 @@ operativaRoutes.get('/operativa/actividades/print', requireRole('admin'), async 
       tableCell: { fontSize: 8, color: '#111111' },
       observaciones: { fontSize: 9, italics: true, color: '#444444' },
     },
-    defaultStyle: { font: 'Helvetica' },
+    defaultStyle: { font: 'Roboto' },
   };
 
   const pdfDoc = pdfMake.createPdf(docDefinition);
@@ -2601,7 +2601,7 @@ operativaRoutes.get('/operativa/caja/print', requireRole('admin'), async (c) => 
       tableHeader: { bold: true, fontSize: 9, fillColor: '#f0f0f0', color: '#111111' },
       tableCell: { fontSize: 9, color: '#111111' },
     },
-    defaultStyle: { font: 'Helvetica' },
+    defaultStyle: { font: 'Roboto' },
   };
 
   const pdfDoc = pdfMake.createPdf(docDefinition);

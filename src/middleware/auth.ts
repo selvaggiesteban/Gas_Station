@@ -113,6 +113,7 @@ export function auditLog(): MiddlewareHandler<AppEnv> {
       } else if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
         const formData = await clonedReq.formData();
         const obj: Record<string, unknown> = {};
+        // @ts-expect-error - FormData.entries() exists at runtime but not in types
         for (const [key, value] of formData.entries()) {
           obj[key] = value;
         }

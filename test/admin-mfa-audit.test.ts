@@ -130,6 +130,22 @@ async function testEncryptSecret(plaintext: string, masterSecret: string = DEFAU
   return btoa(binary);
 }
 
+// Secreto TOTP de prueba: 32 caracteres base32 (20 bytes).
+// otplib v13 exige >= 16 bytes; un secreto de 16 caracteres (10 bytes) lanza SecretTooShortError.
+const TEST_TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+
+// Crea la fila mfa_secrets si no existe (el registro no la crea; solo GET /admin/mfa/setup).
+async function ensureMfaRow(userId: number, secret: string = TEST_TOTP_SECRET): Promise<void> {
+  const existing = await env.DB.prepare('select id from mfa_secrets where user_id = ?')
+    .bind(userId)
+    .first();
+  if (!existing) {
+    await env.DB.prepare('insert into mfa_secrets (user_id, secret, enabled) values (?, ?, 0)')
+      .bind(userId, secret)
+      .run();
+  }
+}
+
 describe('MFA Admin (TOTP)', () => {
   let adminCookie: string;
   let adminId: number;
@@ -164,6 +180,17 @@ describe('MFA Admin (TOTP)', () => {
     expect(secretMatch).toBeTruthy();
     const secret = secretMatch![1] ?? '';
 
+    // Regresión: verify() de otplib v13 es async (devuelve Promise, siempre
+    // truthy) — con el código anterior cualquier 6 dígitos daba por válida la
+    // verificación. Un código incorrecto DEBE rechazarse.
+    const wrongRes = await post('/admin/mfa/setup', { code: '000000' }, adminCookie);
+    expect(wrongRes.status).toBe(302);
+    expect(wrongRes.headers.get('location')).toContain('aviso=invalid_code');
+    const stillDisabled = await env.DB.prepare('select enabled from mfa_secrets where user_id = ?')
+      .bind(adminId)
+      .first<{ enabled: number }>();
+    expect(stillDisabled?.enabled).toBe(0);
+
     // Generate a valid TOTP code using otplib (sync version for tests)
     const { generateSync } = await import('otplib');
     const code = generateSync({ secret });
@@ -197,6 +224,7 @@ describe('MFA Admin (TOTP)', () => {
 
   it('POST /admin/mfa/verify con código de respaldo válido funciona y consume el código', async () => {
     // Enable MFA and set backup codes
+    await ensureMfaRow(adminId);
     const backupCodes = ['BACKUP01', 'BACKUP02', 'BACKUP03'];
     await env.DB.prepare('update mfa_secrets set enabled = 1, backup_codes = ? where user_id = ?')
       .bind(JSON.stringify(backupCodes), adminId)
@@ -226,6 +254,7 @@ describe('MFA Admin (TOTP)', () => {
   });
 
   it('POST /admin/mfa/verify/backup con código válido funciona', async () => {
+    await ensureMfaRow(adminId);
     await env.DB.prepare('update mfa_secrets set enabled = 1, backup_codes = ? where user_id = ?')
       .bind(JSON.stringify(['BACKUP01', 'BACKUP02']), adminId)
       .run();
@@ -237,7 +266,8 @@ describe('MFA Admin (TOTP)', () => {
 
   it('POST /admin/mfa/disable con código válido deshabilita MFA', async () => {
     // Enable MFA first with a known secret
-    const secret = 'JBSWY3DPEHPK3PXP'; // Known test secret
+    const secret = TEST_TOTP_SECRET;
+    await ensureMfaRow(adminId, secret);
     const encrypted = await testEncryptSecret(secret);
     await env.DB.prepare('update mfa_secrets set enabled = 1, secret = ? where user_id = ?')
       .bind(encrypted, adminId)
@@ -269,19 +299,10 @@ describe('MFA Admin (TOTP)', () => {
 
   it('requireMFA middleware bloquea acciones destructivas sin MFA verificado', async () => {
     // Enable MFA for admin (insert secret first if not exists)
-    const existingMfa = await env.DB.prepare('select * from mfa_secrets where user_id = ?')
+    await ensureMfaRow(adminId);
+    await env.DB.prepare('update mfa_secrets set enabled = 1 where user_id = ?')
       .bind(adminId)
-      .first();
-    if (existingMfa) {
-      await env.DB.prepare('update mfa_secrets set enabled = 1 where user_id = ?')
-        .bind(adminId)
-        .run();
-    } else {
-      // Insert a dummy secret (base32 encoded)
-      await env.DB.prepare('insert into mfa_secrets (user_id, secret, enabled) values (?, ?, 1)')
-        .bind(adminId, 'JBSWY3DPEHPK3PXP')
-        .run();
-    }
+      .run();
 
     // Try to delete a user (requires MFA)
     const targetEmail = uniqueEmail('target-mfa');

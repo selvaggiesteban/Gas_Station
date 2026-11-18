@@ -42,6 +42,27 @@ import {
 } from '../services/orders';
 import { generateSecret, verify, generateURI } from 'otplib';
 
+/**
+ * Verifica un código TOTP y devuelve true/false real.
+ *
+ * Otplib v13 expone `verify()` de forma ASINCRÓNICA: devuelve una Promise,
+ * que siempre es truthy. El código original hacía `if (!verify({...}))` y
+ * por eso cualquier código de 6 dígitos daba por válida la verificación.
+ * Acá se await-ea y se lee `.valid`.
+ */
+async function verifyTotpCode(secret: string, token: string): Promise<boolean> {
+  try {
+    const result = (await verify({ token, secret })) as unknown;
+    if (typeof result === 'boolean') return result;
+    if (result && typeof result === 'object' && 'valid' in result) {
+      return (result as { valid?: unknown }).valid === true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 type Role = (typeof ROLE_VALUES)[number];
 type GoalType = (typeof GOAL_TYPE_VALUES)[number];
 type OrderStatus = (typeof ORDER_STATUS_VALUES)[number];
@@ -1920,7 +1941,12 @@ adminRoutes.get('/admin/mfa/setup', requireRole('admin'), async (c) => {
   // Generate a new secret if none exists
   let secret: string;
   if (existing[0]?.secret) {
-    secret = await decryptSecret(existing[0].secret, c.env.JWT_SECRET || c.env.MFA_SECRET || 'default-secret-change-me');
+    try {
+      secret = await decryptSecret(existing[0].secret, c.env.JWT_SECRET || c.env.MFA_SECRET || 'default-secret-change-me');
+    } catch {
+      // Secret ilegible (fila corrupta o cifrado con otra clave): regenerar
+      secret = generateSecret();
+    }
   } else {
     secret = generateSecret();
   }
@@ -2019,8 +2045,17 @@ adminRoutes.post('/admin/mfa/setup', requireRole('admin'), async (c) => {
     return c.redirect('/admin/mfa/setup?aviso=invalid_code');
   }
 
-  const secret = await decryptSecret(mfa[0].secret, c.env.JWT_SECRET || c.env.MFA_SECRET || 'default-secret-change-me');
-  const verified = verify({ token: code, secret });
+  let verified = false;
+  try {
+    const secret = await decryptSecret(
+      mfa[0].secret,
+      c.env.JWT_SECRET || c.env.MFA_SECRET || 'default-secret-change-me',
+    );
+    verified = await verifyTotpCode(secret, code);
+  } catch {
+    // Secret ilegible o token inválido: rechazar
+    verified = false;
+  }
 
   if (!verified) {
     return c.redirect('/admin/mfa/setup?aviso=invalid_code');
@@ -2088,8 +2123,12 @@ adminRoutes.post('/admin/mfa/verify', requireRole('admin'), async (c) => {
   const code = str(body.code);
   const redirect = str(body.redirect) || '/admin';
 
-  if (!/^\d{6}$/.test(code)) {
-    return c.redirect(`/admin/mfa/verify?redirect=${encodeURIComponent(redirect)}&error=invalid`);
+  const invalid = () => c.redirect(`/admin/mfa/verify?redirect=${encodeURIComponent(redirect)}&error=invalid`);
+
+  // TOTP: 6 dígitos. Código de respaldo: alfanumérico (p.ej. BACKUP01).
+  const isTotp = /^\d{6}$/.test(code);
+  if (!isTotp && !/^[A-Za-z0-9]{8}$/.test(code)) {
+    return invalid();
   }
 
   const db = dbOf(c);
@@ -2100,31 +2139,39 @@ adminRoutes.post('/admin/mfa/verify', requireRole('admin'), async (c) => {
     .limit(1);
 
   if (!mfa[0] || !mfa[0].enabled || !mfa[0].secret) {
-    return c.redirect(`/admin/mfa/verify?redirect=${encodeURIComponent(redirect)}&error=invalid`);
+    return invalid();
   }
 
-  const secret = await decryptSecret(mfa[0].secret, c.env.JWT_SECRET || c.env.MFA_SECRET || 'default-secret-change-me');
-  const verified = verify({ token: code, secret });
-
-  if (!verified) {
-    // Check backup codes
-    const backupCodes = JSON.parse(mfa[0].backupCodes || '[]') as string[];
-    const codeUpper = code.toUpperCase();
-    const idx = backupCodes.indexOf(codeUpper);
-    if (idx !== -1) {
-      // Valid backup code - remove it and allow
-      backupCodes.splice(idx, 1);
-      await db
-        .update(mfaSecrets)
-        .set({ backupCodes: JSON.stringify(backupCodes), updatedAt: new Date() })
-        .where(eq(mfaSecrets.userId, user.id));
-      c.set('mfaVerified', true);
-      return c.redirect(redirect);
+  if (isTotp) {
+    let verified = false;
+    try {
+      const secret = await decryptSecret(
+        mfa[0].secret,
+        c.env.JWT_SECRET || c.env.MFA_SECRET || 'default-secret-change-me',
+      );
+      verified = await verifyTotpCode(secret, code);
+    } catch {
+      // Secret corrupto o clave maestra distinta: tratar como código inválido
+      verified = false;
     }
-    return c.redirect(`/admin/mfa/verify?redirect=${encodeURIComponent(redirect)}&error=invalid`);
+    if (!verified) {
+      return invalid();
+    }
+    c.set('mfaVerified', true);
+    return c.redirect(redirect);
   }
 
-  // Set MFA verified flag in context for requireMFA middleware
+  // Código de respaldo: consumirlo y permitir
+  const backupCodes = JSON.parse(mfa[0].backupCodes || '[]') as string[];
+  const idx = backupCodes.indexOf(code.toUpperCase());
+  if (idx === -1) {
+    return invalid();
+  }
+  backupCodes.splice(idx, 1);
+  await db
+    .update(mfaSecrets)
+    .set({ backupCodes: JSON.stringify(backupCodes), updatedAt: new Date() })
+    .where(eq(mfaSecrets.userId, user.id));
   c.set('mfaVerified', true);
   return c.redirect(redirect);
 });
@@ -2220,22 +2267,20 @@ adminRoutes.post('/admin/mfa/disable', requireRole('admin'), async (c) => {
     return c.redirect('/admin/mfa/setup?aviso=invalid_disable_code');
   }
 
-  const secret = await decryptSecret(mfa[0].secret, c.env.JWT_SECRET || c.env.MFA_SECRET || 'default-secret-change-me');
-  const verified = verify({ token: code, secret });
+  let verified = false;
+  try {
+    const secret = await decryptSecret(
+      mfa[0].secret,
+      c.env.JWT_SECRET || c.env.MFA_SECRET || 'default-secret-change-me',
+    );
+    verified = await verifyTotpCode(secret, code);
+  } catch {
+    // Secret corrupto o clave maestra distinta: tratar como código inválido
+    verified = false;
+  }
 
   if (!verified) {
-    // Check backup codes
-    const backupCodes = JSON.parse(mfa[0].backupCodes || '[]') as string[];
-    const codeUpper = code.toUpperCase();
-    const idx = backupCodes.indexOf(codeUpper);
-    if (idx === -1) {
-      return c.redirect('/admin/mfa/setup?aviso=invalid_disable_code');
-    }
-    backupCodes.splice(idx, 1);
-    await db
-      .update(mfaSecrets)
-      .set({ backupCodes: JSON.stringify(backupCodes), updatedAt: new Date() })
-      .where(eq(mfaSecrets.userId, user.id));
+    return c.redirect('/admin/mfa/setup?aviso=invalid_disable_code');
   }
 
   // Disable MFA

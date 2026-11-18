@@ -80,7 +80,10 @@ export function requireMFA(): MiddlewareHandler<AppEnv> {
     }
 
     // Store the intended destination and redirect to MFA verification
-    const intendedPath = c.req.path + (c.req.query() ? `?${c.req.query()}` : '');
+    // NOTE: c.req.query() sin argumentos devuelve un objeto, no un string.
+    // Concatenarlo directamente lanzaba "Cannot convert object to primitive value" (500).
+    const qs = new URLSearchParams(c.req.query() as Record<string, string>).toString();
+    const intendedPath = c.req.path + (qs ? `?${qs}` : '');
     return c.redirect(`/admin/mfa/verify?redirect=${encodeURIComponent(intendedPath)}`);
   };
 }

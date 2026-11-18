@@ -54,6 +54,20 @@ const DATE_FMT = new Intl.DateTimeFormat('es-AR', {
   timeZone: 'America/Argentina/Buenos_Aires',
 });
 
+// Hora (HH:mm) en Argentina, para "Últimos movimientos": el admin usa el
+// horario de inicio de sesión para controlar la puntualidad de los turnos.
+const TIME_FMT = new Intl.DateTimeFormat('es-AR', {
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+  timeZone: 'America/Argentina/Buenos_Aires',
+});
+
+// dd/mm/aaaa HH:mm (sin coma, a pedido del cliente).
+function formatDateTime(d: Date): string {
+  return `${DATE_FMT.format(d)} ${TIME_FMT.format(d)}`;
+}
+
 const POINT_REASON_LABELS: Record<string, string> = {
   challenge: 'Desafío completado',
   login: 'Inicio de sesión',
@@ -387,11 +401,45 @@ async function loadNotificationsHtml(db: Db, userId: number): Promise<string> {
   </div>`;
 }
 
-async function loadPointLogsHtml(db: Db, userId: number): Promise<string> {
+async function loadPointLogsHtml(
+  db: Db,
+  user: { id: number; role: string },
+): Promise<string> {
+  if (user.role === 'admin') {
+    // Vista de control de puntualidad: últimos inicios de sesión de TODOS
+    // los usuarios, con fecha + hora.
+    const logins = await db
+      .select({
+        createdAt: pointLogs.createdAt,
+        reason: pointLogs.reason,
+        name: users.name,
+      })
+      .from(pointLogs)
+      .innerJoin(users, eq(pointLogs.userId, users.id))
+      .where(eq(pointLogs.reason, 'login'))
+      .orderBy(desc(pointLogs.createdAt), desc(pointLogs.id))
+      .limit(10);
+    if (logins.length === 0) {
+      return `<div class="card">
+      <h2>Últimos movimientos</h2>
+      <p class="muted">Todavía no hay inicios de sesión registrados.</p>
+    </div>`;
+    }
+    const items = logins
+      .map((log) => {
+        const label = POINT_REASON_LABELS[log.reason] ?? log.reason;
+        return `<li style="margin-bottom:0.35rem">${formatDateTime(log.createdAt)} — ${escapeHtml(log.name)} — ${escapeHtml(label)}</li>`;
+      })
+      .join('');
+    return `<div class="card">
+    <h2>Últimos movimientos</h2>
+    <ul style="margin:0;padding-left:1.2rem">${items}</ul>
+  </div>`;
+  }
   const logs = await db
     .select()
     .from(pointLogs)
-    .where(eq(pointLogs.userId, userId))
+    .where(eq(pointLogs.userId, user.id))
     .orderBy(desc(pointLogs.createdAt), desc(pointLogs.id))
     .limit(10);
   if (logs.length === 0) {
@@ -403,8 +451,14 @@ async function loadPointLogsHtml(db: Db, userId: number): Promise<string> {
   const items = logs
     .map((log) => {
       const label = POINT_REASON_LABELS[log.reason] ?? log.reason;
-      const sign = log.points > 0 ? '+' : '';
-      return `<li style="margin-bottom:0.35rem">${DATE_FMT.format(log.createdAt)} — ${escapeHtml(label)} — <strong>${sign}${log.points} pts</strong></li>`;
+      const parts = [formatDateTime(log.createdAt), escapeHtml(label)];
+      // Los movimientos con 0 puntos (p. ej. inicios de sesión) se muestran
+      // solo con el motivo, sin "+0 pts".
+      if (log.points !== 0) {
+        const sign = log.points > 0 ? '+' : '';
+        parts.push(`<strong>${sign}${log.points} pts</strong>`);
+      }
+      return `<li style="margin-bottom:0.35rem">${parts.join(' — ')}</li>`;
     })
     .join('');
   return `<div class="card">
@@ -466,7 +520,7 @@ appRoutes.get('/app', requireAuth(), async (c) => {
       ${await loadAnnouncementsHtml(db, user, now)}
       ${!isAdmin ? await loadNotificationsHtml(db, user.id) : ''}
       ${!isAdmin ? await loadActiveChallenges(db, user, now) : ''}
-      ${!isAdmin ? await loadPointLogsHtml(db, user.id) : ''}`,
+      ${await loadPointLogsHtml(db, user)}`,
     ),
   );
 });

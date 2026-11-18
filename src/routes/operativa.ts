@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Context, Next } from 'hono';
-import { and, asc, desc, eq, gte, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, like, lt, or, sql } from 'drizzle-orm';
 import type { AppEnv } from '../env';
 import type { SessionUser } from '../lib/session';
 import { dbOf, brandOf, requireAuth, requireRole } from '../middleware/auth';
@@ -19,6 +19,7 @@ import {
   shiftReportReadings,
   shiftReports,
   stores,
+  users,
 } from '../db/schema';
 import { ensureDefaultStore } from '../services/orders';
 import pdfMake from 'pdfmake/build/pdfmake';
@@ -275,6 +276,33 @@ function shiftOptions(selected?: string): string {
   ).join('');
 }
 
+// Precio único de GNC: se toma del producto GNC de la tienda (tabla products).
+// Prioriza la categoría exacta 'gnc'; si no, busca por categoría/slug/nombre.
+async function findGncProduct(
+  db: Db,
+): Promise<{ name: string; priceCents: number } | undefined> {
+  const exact = await db
+    .select({ name: products.name, priceCents: products.priceCents })
+    .from(products)
+    .where(or(eq(products.category, 'gnc'), eq(products.slug, 'gnc')))
+    .orderBy(asc(products.id))
+    .limit(1);
+  if (exact[0]) return exact[0];
+  const parecido = await db
+    .select({ name: products.name, priceCents: products.priceCents })
+    .from(products)
+    .where(
+      or(
+        like(products.category, '%gnc%'),
+        like(products.slug, '%gnc%'),
+        like(products.name, '%GNC%'),
+      ),
+    )
+    .orderBy(asc(products.id))
+    .limit(1);
+  return parecido[0];
+}
+
 // Prefijos de columnas por turno en daily_activity_summary
 const MANUAL_PREFIX: Record<Shift, 'manana' | 'tarde' | 'noche'> = {
   morning: 'manana',
@@ -367,18 +395,12 @@ operativaRoutes.get('/operativa', async (c) => {
     .limit(1);
   const storeName = storeRows[0]?.name ?? '—';
 
-  const [cash, sales, daily, shift, raf] = await Promise.all([
+  const [cash, daily, shift] = await Promise.all([
     db
       .select()
       .from(cashDays)
       .where(eq(cashDays.storeId, storeId))
       .orderBy(desc(cashDays.reportDate), desc(cashDays.id))
-      .limit(1),
-    db
-      .select()
-      .from(salesSummaries)
-      .where(eq(salesSummaries.storeId, storeId))
-      .orderBy(desc(salesSummaries.reportDate), desc(salesSummaries.id))
       .limit(1),
     db
       .select()
@@ -391,12 +413,6 @@ operativaRoutes.get('/operativa', async (c) => {
       .from(shiftReports)
       .where(eq(shiftReports.storeId, storeId))
       .orderBy(desc(shiftReports.reportDate), desc(shiftReports.id))
-      .limit(1),
-    db
-      .select()
-      .from(raffleCoupons)
-      .where(eq(raffleCoupons.storeId, storeId))
-      .orderBy(desc(raffleCoupons.issuedAt), desc(raffleCoupons.id))
       .limit(1),
   ]);
 
@@ -423,7 +439,7 @@ operativaRoutes.get('/operativa', async (c) => {
       : NO_DATA,
   );
 
-  // El playero solo carga rendiciones; el admin ve todos los módulos.
+  // El playero solo carga rendiciones; el admin maneja caja y resumen diario.
   const cards = (
     isAdmin
       ? [
@@ -436,28 +452,11 @@ operativaRoutes.get('/operativa', async (c) => {
               : NO_DATA,
           ),
           indexCard(
-            'Resumen de ventas',
-            'Totales por medio de pago, por día y turno.',
-            '/operativa/ventas',
-            sales[0]
-              ? `${fmtDay(sales[0].reportDate)} · Turno ${SHIFT_LABELS[sales[0].shift]} · Total ${formatArs(sales[0].totalCents)}`
-              : NO_DATA,
-          ),
-          indexCard(
-            'Resumen diario de actividades',
-            'Matriz de GNC y revisión de mangueras por turno.',
-            '/operativa/actividades',
+            'Resumen diario',
+            'Matriz de GNC, facturación y recaudación del día.',
+            '/operativa/resumen-diario',
             daily[0]
-              ? `${fmtDay(daily[0].reportDate)} · Turno ${SHIFT_LABELS[daily[0].shift]} · GNC ${daily[0].gncVolume} m³`
-              : NO_DATA,
-          ),
-          rendicionCard,
-          indexCard(
-            'Sorteo',
-            'Inscriptos automáticos al registrarse; marcá al ganador.',
-            '/operativa/sorteo',
-            raf[0]
-              ? `Último: ${escapeHtml(raf[0].code)} · ${raf[0].winning ? 'Ganador' : 'Emitido'} · ${fmtMoment(raf[0].issuedAt)}`
+              ? `${fmtDay(daily[0].reportDate)} · Turno ${SHIFT_LABELS[daily[0].shift] ?? daily[0].shift} · GNC ${daily[0].gncVolume} m³`
               : NO_DATA,
           ),
         ]
@@ -469,7 +468,7 @@ operativaRoutes.get('/operativa', async (c) => {
     'Operativa',
     `<div class="card">
       <h1>Operativa diaria</h1>
-      <p class="muted">${isAdmin ? 'Seis formularios de la estación, ahora digitales.' : 'Cargá la rendición de tu turno.'} Tienda activa: <strong>${escapeHtml(storeName)}</strong>.</p>
+      <p class="muted">${isAdmin ? 'Caja y resumen diario del día.' : 'Cargá la rendición de tu turno.'} Tienda activa: <strong>${escapeHtml(storeName)}</strong>.</p>
       <a class="btn secondary" href="/app">Volver al inicio</a>
     </div>
     ${cards}`,
@@ -708,6 +707,7 @@ operativaRoutes.get('/operativa/caja', async (c) => {
       <form method="get" action="/operativa/caja" class="row" style="gap:0.5rem;align-items:center">
         <input type="date" name="fecha" value="${fechaInput}" style="width:auto;margin-top:0" aria-label="Fecha">
         <button type="submit" style="${SMALL_BTN}">Mostrá</button>
+        <a class="btn secondary" href="/operativa/caja/print?fecha=${fechaInput}" target="_blank" style="${SMALL_BTN}">Imprimir</a>
       </form>
       <p class="sub" style="margin:0">Fecha: <strong>${fmtDay(selected)}</strong>${cash ? ` · <span class="pill"${cash.status === 'closed' ? ' style="background:#52525b"' : ''}>${cash.status === 'open' ? 'Abierta' : 'Cerrada'}</span>` : ''}</p>
     </div>`;
@@ -1376,24 +1376,6 @@ operativaRoutes.get('/operativa/ventas', async (c) => {
         <td style="${TD}">${formatArs(r.transferCents)}</td>
         <td style="${TD}">${formatArs(r.creditCents)}</td>
         <td style="${TD}"><strong>${formatArs(r.totalCents)}</strong></td>
-        <td style="${TD}">
-          <details style="display:inline">
-            <summary style="cursor:pointer;font-size:0.85rem">Editá</summary>
-            <form method="post" action="/operativa/ventas/${r.id}/editar" style="min-width:14rem">
-              <label for="ef-${r.id}">Efectivo (pesos)</label>
-              <input id="ef-${r.id}" name="efectivo" type="number" step="0.01" min="0" value="${(r.cashCents / 100).toFixed(2)}" required>
-              <label for="ta-${r.id}">Tarjeta (pesos)</label>
-              <input id="ta-${r.id}" name="tarjeta" type="number" step="0.01" min="0" value="${(r.cardCents / 100).toFixed(2)}" required>
-              <label for="tr-${r.id}">Transferencia (pesos)</label>
-              <input id="tr-${r.id}" name="transferencia" type="number" step="0.01" min="0" value="${(r.transferCents / 100).toFixed(2)}" required>
-              <label for="fi-${r.id}">Fiado (pesos)</label>
-              <input id="fi-${r.id}" name="fiado" type="number" step="0.01" min="0" value="${(r.creditCents / 100).toFixed(2)}" required>
-              <label for="vnotas-${r.id}">Notas</label>
-              <input id="vnotas-${r.id}" name="notas" type="text" value="${escapeHtml(r.notes ?? '')}">
-              <button type="submit" style="${SMALL_BTN}">Guardá</button>
-            </form>
-          </details>
-        </td>
       </tr>`,
     )
     .join('');
@@ -1407,7 +1389,6 @@ operativaRoutes.get('/operativa/ventas', async (c) => {
       <h1>Resumen de ventas</h1>
       <p class="muted">Un registro por tienda, día y turno. El total se suma en el servidor.</p>
       ${filterBar('/operativa/ventas', fecha, storesHtml)}
-      <a class="btn" href="/operativa/ventas/nuevo">Cargá un turno</a>
       <table class="papel" style="margin-top:0.75rem">
         <thead><tr>
           <th style="${TH}">Fecha</th>
@@ -1417,9 +1398,8 @@ operativaRoutes.get('/operativa/ventas', async (c) => {
           <th style="${TH}">Transferencia</th>
           <th style="${TH}">Fiado</th>
           <th style="${TH}">Total</th>
-          <th style="${TH}">Acciones</th>
         </tr></thead>
-        <tbody>${bodyRows || `<tr><td colspan="8" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
+        <tbody>${bodyRows || `<tr><td colspan="7" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
       </table>
     </div>`,
     { notice: aviso(c, 'Resumen guardado.') },
@@ -1668,6 +1648,7 @@ operativaRoutes.get('/operativa/actividades', async (c) => {
     .join('');
 
   const storesHtml = await storeOptions(db, access.storeId);
+  const fechaInput = dateInput(day ?? utcToday());
 
   return render(
     c,
@@ -1676,7 +1657,7 @@ operativaRoutes.get('/operativa/actividades', async (c) => {
       <h1>Resumen diario de actividades</h1>
       <p class="muted">Una fila por turno con la matriz de GNC. El volumen se calcula como cierre menos apertura.</p>
       ${filterBar('/operativa/actividades', fecha, storesHtml)}
-      <a class="btn" href="/operativa/actividades/nuevo">Cargá un turno</a>
+      <a class="btn secondary" href="/operativa/actividades/print?fecha=${fechaInput}" target="_blank" style="${SMALL_BTN}">Imprimir</a>
       <table class="papel" style="margin-top:0.75rem">
         <thead><tr>
           <th style="${TH}">Fecha</th>
@@ -1985,6 +1966,7 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
         <input type="date" name="fecha" value="${fechaInput}" style="width:auto;margin-top:0" aria-label="Fecha">
         <select name="tienda" style="width:auto;margin-top:0" aria-label="Tienda">${storesHtml}</select>
         <button type="submit" style="${SMALL_BTN}">Mostrá</button>
+        <a class="btn secondary" href="/operativa/actividades/print?fecha=${fechaInput}" target="_blank" style="${SMALL_BTN}">Imprimir</a>
       </form>
       <p class="muted" style="margin-top:0.5rem">Fecha: <strong>${fmtDay(selected)}</strong></p>
       
@@ -2865,7 +2847,7 @@ operativaRoutes.get('/operativa/rendicion', async (c) => {
       <h1>Rendición de turno</h1>
       <p class="muted">Encabezado del turno, puente de medición y lecturas de cada manguera.</p>
       ${filterBar('/operativa/rendicion', fecha, storesHtml)}
-      <a class="btn" href="/operativa/rendicion/nuevo">Cargá una rendición</a>
+      ${user.role !== 'admin' ? `<a class="btn" href="/operativa/rendicion/nuevo">Cargá una rendición</a>` : ''}
       <table class="papel" style="margin-top:0.75rem">
         <thead><tr>
           <th style="${TH}">Fecha</th>
@@ -2890,6 +2872,12 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
   const user = c.get('user')!;
   const access = await resolveStore(c, db, c.req.query('tienda'));
   if ('error' in access) return denied(c, access.error);
+  // Precio de GNC único, tomado del producto de la tienda (tabla products).
+  const gncProduct = await findGncProduct(db);
+  const gncPriceInput = gncProduct
+    ? `<p class="muted" style="margin:0 0 0.35rem">Precio GNC (desde Tienda): <strong>${formatArs(gncProduct.priceCents)}</strong> /m³</p>
+            <input id="gnc_price" name="gnc_price" type="hidden" value="${(gncProduct.priceCents / 100).toFixed(2)}">`
+    : `<input id="gnc_price" name="gnc_price" type="number" step="0.01" min="0" value="0">`;
   return render(
     c,
     'Nueva rendición de turno',
@@ -2934,7 +2922,7 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
           </div>
           <div>
             <label for="gnc_price">GNC - Precio unitario (pesos/m³)</label>
-            <input id="gnc_price" name="gnc_price" type="number" step="0.01" min="0" value="0">
+            ${gncPriceInput}
           </div>
           <div>
             <label for="gnc_sales">GNC - Importe (pesos)</label>
@@ -3168,9 +3156,11 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
   }
   
   // Ventas por rubro: el importe se calcula SIEMPRE en el servidor
-  // Precio único por turno (GNC) - viene de body.gnc_price (form field name)
+  // Precio único por turno (GNC): priorizá el producto GNC de la tienda;
+  // si no existe, se usa lo que venga en body.gnc_price.
+  const gncProduct = await findGncProduct(db);
   const gncQty = qtyFrom(body.gnc_qty);
-  const priceCents = centsOr0(body.gnc_price);
+  const priceCents = gncProduct ? gncProduct.priceCents : centsOr0(body.gnc_price);
   const lubricantesSalesCents = centsOr0(body.lubricantes_sales);
   const variosQty = qtyFrom(body.varios_qty);
   const variosPriceCents = centsOr0(body.varios_price);
@@ -3255,6 +3245,37 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
       totalCents: Math.round((r.closing - r.opening) * 0), // price is in shiftReports.priceCents
     })),
   );
+
+  // Automatizar la planilla del resumen diario: en lo que se carga la
+  // rendición se actualizan los datos de GNC del turno (sin tocar
+  // pumpCheck ni notes, que se cargan a mano).
+  const gncOpening = readings.reduce((a, r) => a + r.opening, 0);
+  const gncClosing = readings.reduce((a, r) => a + r.closing, 0);
+  await db
+    .insert(dailyActivities)
+    .values({
+      storeId: access.storeId,
+      reportDate: fecha,
+      shift: turno,
+      gncOpening,
+      gncClosing,
+      gncVolume: gncQty,
+      gncSalesCents,
+    })
+    .onConflictDoUpdate({
+      target: [
+        dailyActivities.storeId,
+        dailyActivities.reportDate,
+        dailyActivities.shift,
+      ],
+      set: {
+        gncOpening,
+        gncClosing,
+        gncVolume: gncQty,
+        gncSalesCents,
+      },
+    });
+
   return c.redirect(`/operativa/rendicion/${reportId}?aviso=1`);
 });
 
@@ -3340,6 +3361,7 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
       <div class="row">
         <span class="pill">Inicio: ${MOMENT_FMT.format(report.shiftStart)}</span>
         <span class="pill">Fin: ${MOMENT_FMT.format(report.shiftEnd)}</span>
+        <a class="btn secondary" href="/operativa/rendicion/${report.id}/print" target="_blank" style="${SMALL_BTN}">Imprimir</a>
       </div>
       <table class="papel" style="margin-top:0.75rem">
         <thead><tr>
@@ -3418,3 +3440,214 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
     { notice: aviso(c, 'Rendición guardada.') },
   );
 });
+
+// Generate PDF for Rendición de turno
+operativaRoutes.get(
+  '/operativa/rendicion/:id/print',
+  requireRole('admin', 'store_manager'),
+  async (c) => {
+    const db = dbOf(c);
+    const user = c.get('user')!;
+    const id = idFrom(c.req.param('id'));
+    if (!id) return notFound(c, 'Rendición de turno', '/operativa/rendicion');
+    const rows = await db
+      .select()
+      .from(shiftReports)
+      .where(eq(shiftReports.id, id))
+      .limit(1);
+    const report = rows[0];
+    if (!report) {
+      return notFound(c, 'Rendición de turno', '/operativa/rendicion');
+    }
+    if (!(await canManageStore(db, user, report.storeId))) {
+      return denied(c, 'No tenés permiso sobre la tienda de esa rendición.');
+    }
+    const readings = await db
+      .select()
+      .from(shiftReportReadings)
+      .where(eq(shiftReportReadings.reportId, report.id))
+      .orderBy(asc(shiftReportReadings.manguera));
+    const cashier = report.cashierId
+      ? await db
+          .select({ name: users.name })
+          .from(users)
+          .where(eq(users.id, report.cashierId))
+          .limit(1)
+      : [];
+    const operador = cashier[0]?.name ?? '—';
+    const fechaStr = dateInput(report.reportDate);
+
+    const headerRow = (labels: string[]): any[] =>
+      labels.map((l) => ({ text: l, style: 'tableHeader' }));
+    const cell = (v: string): any => ({ text: v, style: 'tableCell' });
+    const boldCell = (v: string): any => ({ text: v, style: 'tableBold' });
+
+    // Lecturas de mangueras
+    const lecturasRows: any[][] = [
+      headerRow(['Manguera', 'Producto', 'Apertura', 'Cierre', 'Volumen', 'Total']),
+      ...readings.map((r) => [
+        cell(String(r.manguera)),
+        cell(FUEL_LABELS[r.product]),
+        cell(formatNumPdf(r.openingReading)),
+        cell(formatNumPdf(r.closingReading)),
+        cell(formatNumPdf(r.volume)),
+        cell(formatArsPdf(r.totalCents)),
+      ]),
+    ];
+    if (readings.length === 0) {
+      lecturasRows.push([
+        { text: 'Sin lecturas de mangueras.', colSpan: 6, style: 'tableCell' },
+        {},
+        {},
+        {},
+        {},
+        {},
+      ]);
+    }
+
+    // Ventas del turno
+    const ventasRows: any[][] = [
+      headerRow(['Rubro', 'Cantidad', 'Precio unitario', 'Importe']),
+      [
+        cell('GNC'),
+        cell(`${formatNumPdf(report.gncQty)} m³`),
+        cell(formatArsPdf(report.priceCents)),
+        cell(formatArsPdf(report.gncSalesCents)),
+      ],
+      [
+        cell('Lubricantes'),
+        cell('—'),
+        cell('—'),
+        cell(formatArsPdf(report.lubricantesSalesCents)),
+      ],
+      [
+        cell('Varios'),
+        cell(`${formatNumPdf(report.variosQty)} un.`),
+        cell(formatArsPdf(report.variosPriceCents)),
+        cell(formatArsPdf(report.variosSalesCents)),
+      ],
+      [
+        boldCell('Total'),
+        cell(''),
+        cell(''),
+        boldCell(formatArsPdf(report.totalSalesCents)),
+      ],
+    ];
+
+    // Recaudación ensobrada
+    const sobres = [
+      { n: 1, hora: report.sobre1Hora, cents: report.sobre1ImporteCents },
+      { n: 2, hora: report.sobre2Hora, cents: report.sobre2ImporteCents },
+      { n: 3, hora: report.sobre3Hora, cents: report.sobre3ImporteCents },
+      { n: 4, hora: report.sobre4Hora, cents: report.sobre4ImporteCents },
+      { n: 5, hora: report.sobre5Hora, cents: report.sobre5ImporteCents },
+      { n: 6, hora: report.sobre6Hora, cents: report.sobre6ImporteCents },
+    ];
+    const ensobradoRows: any[][] = [
+      headerRow(['Sobre', 'Hora', 'Importe']),
+      ...sobres.map((s) => [
+        cell(`Sobre ${s.n}`),
+        cell(s.hora ?? '—'),
+        cell(formatArsPdf(s.cents)),
+      ]),
+      [
+        boldCell('Total ensobrado'),
+        cell(''),
+        boldCell(formatArsPdf(report.totalEnsobradoCents)),
+      ],
+    ];
+
+    // Puente de medición
+    const merma = report.puenteEntrante - report.puenteSaliente;
+    const puenteRows: any[][] = [
+      headerRow(['Concepto', 'm³']),
+      [cell('Entrante'), cell(report.puenteEntrante.toFixed(3))],
+      [cell('Saliente'), cell(report.puenteSaliente.toFixed(3))],
+      [boldCell('Merma'), boldCell(merma.toFixed(3))],
+    ];
+
+    const observaciones = report.observaciones ?? report.notes;
+
+    const docDefinition: any = {
+      pageOrientation: 'portrait',
+      pageMargins: [20, 20, 20, 20],
+      content: [
+        {
+          text: 'LESCO GNC - Rendición de turno',
+          style: 'header',
+          alignment: 'center',
+          margin: [0, 0, 0, 5],
+        },
+        {
+          text: `Fecha: ${fmtDay(report.reportDate)} | Turno: ${SHIFT_LABELS[report.shift]} | Tienda: ${report.storeId}`,
+          style: 'subheader',
+          alignment: 'center',
+          margin: [0, 0, 0, 3],
+        },
+        {
+          text: `Operador: ${operador} | Inicio: ${MOMENT_FMT.format(report.shiftStart)} | Fin: ${MOMENT_FMT.format(report.shiftEnd)}`,
+          style: 'subheader',
+          alignment: 'center',
+          margin: [0, 0, 0, 10],
+        },
+        {
+          text: 'Lecturas de mangueras',
+          style: 'sectionHeader',
+          margin: [0, 10, 0, 5],
+        },
+        { table: { widths: ['auto', '*', 'auto', 'auto', 'auto', 'auto'], body: lecturasRows } },
+        { text: '', margin: [0, 10, 0, 0] },
+        {
+          text: 'Ventas del turno',
+          style: 'sectionHeader',
+          margin: [0, 10, 0, 5],
+        },
+        { table: { widths: ['*', 'auto', 'auto', 'auto'], body: ventasRows } },
+        { text: '', margin: [0, 10, 0, 0] },
+        {
+          text: 'Recaudación ensobrada',
+          style: 'sectionHeader',
+          margin: [0, 10, 0, 5],
+        },
+        { table: { widths: ['*', 'auto', 'auto'], body: ensobradoRows } },
+        { text: '', margin: [0, 10, 0, 0] },
+        {
+          text: 'Puente de medición',
+          style: 'sectionHeader',
+          margin: [0, 10, 0, 5],
+        },
+        { table: { widths: ['*', 'auto'], body: puenteRows } },
+        ...(observaciones
+          ? [
+              { text: '', margin: [0, 10, 0, 0] },
+              {
+                text: `Observaciones: ${observaciones}`,
+                style: 'observaciones',
+                margin: [0, 5, 0, 0],
+              },
+            ]
+          : []),
+      ],
+      styles: {
+        header: { fontSize: 16, bold: true, color: '#111111' },
+        subheader: { fontSize: 11, color: '#666666' },
+        sectionHeader: { fontSize: 12, bold: true, color: '#333333' },
+        tableHeader: { bold: true, fontSize: 8, fillColor: '#f0f0f0', color: '#111111' },
+        tableCell: { fontSize: 8, color: '#111111' },
+        tableBold: { fontSize: 8, bold: true, color: '#111111' },
+        observaciones: { fontSize: 9, italics: true, color: '#444444' },
+      },
+      defaultStyle: { font: 'Roboto' },
+    };
+
+    const pdfDoc = pdfMake.createPdf(docDefinition);
+    const pdfBuffer: Uint8Array = await pdfDoc.getBuffer().then((buffer: Buffer) => new Uint8Array(buffer));
+
+    return new Response(pdfBuffer as unknown as BodyInit, {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `inline; filename="rendicion-${fechaStr}.pdf"`,
+      },
+    });
+  },
+);

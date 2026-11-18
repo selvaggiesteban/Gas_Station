@@ -171,9 +171,9 @@ authRoutes.post('/login', loginRateLimit, async (c) => {
     userAgent: c.req.header('user-agent') ?? null,
   });
   setSessionCookie(c, token);
-  if (user.role !== 'admin') {
-    await awardLoginPoints(db, user);
-  }
+  // Registro (con 0 puntos) el inicio de sesión en el log, para todos los
+  // roles: es el control de horario de entrada que pidió el admin.
+  await awardLoginPoints(db, user);
   return c.redirect('/app');
 });
 

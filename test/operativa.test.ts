@@ -105,13 +105,40 @@ describe('operativa', () => {
     expect(conSesion.status).toBe(200);
     const html = await conSesion.text();
     expect(html).toContain('Caja diaria');
-    expect(html).toContain('Resumen de ventas');
-    expect(html).toContain('Resumen diario de actividades');
-    expect(html).not.toContain('Stock de lubricantes');
-    expect(html).toContain('Rendición de turno');
-    expect(html).toContain('Sorteo');
+    expect(html).toContain('Resumen diario');
     expect(html).toContain('/operativa/caja');
-    expect(html).toContain('/operativa/sorteo');
+    expect(html).not.toContain('Stock de lubricantes');
+    expect(html).not.toContain('Resumen de ventas');
+    expect(html).not.toContain('Rendición de turno');
+    expect(html).not.toContain('Sorteo');
+    expect(html).not.toContain('/operativa/sorteo');
+  });
+
+  it('home del admin no muestra links a sorteo ni a cargar ventas', async () => {
+    const cookie = await registerAs(
+      'Admin Home Limpio',
+      uniqueEmail('admin-home-limpio'),
+      'admin',
+    );
+    const res = await get('/operativa', cookie);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).not.toContain('/operativa/sorteo');
+    expect(html).not.toContain('/operativa/ventas/nuevo');
+    expect(html).not.toContain('/operativa/rendicion/nuevo');
+    // El playero sigue viendo su única carga: la rendición del turno.
+    const playero = await registerAs(
+      'Playero Home',
+      uniqueEmail('playero-home'),
+      'store_manager',
+    );
+    const homePlayero = await get('/operativa', playero);
+    expect(homePlayero.status).toBe(200);
+    const htmlPlayero = await homePlayero.text();
+    expect(htmlPlayero).toContain('Rendición de turno');
+    expect(htmlPlayero).toContain('/operativa/rendicion');
+    expect(htmlPlayero).not.toContain('/operativa/sorteo');
+    expect(htmlPlayero).not.toContain('/operativa/caja');
   });
 
   it('caja: crear, listar y cerrar con diferencia calculada en el servidor', async () => {
@@ -922,6 +949,191 @@ describe('operativa', () => {
     // Total recaudación mañana = facturado $22.700 + servicios $1.500,50 = $24.200,50
     expect(html2).toContain(formatArs(2420050));
   });
+
+  it('ventas: la pantalla queda de solo lectura (sin carga ni edición inline)', async () => {
+    const cookie = await registerAs(
+      'Ventas Solo Lectura',
+      uniqueEmail('ventas-solo-lectura'),
+      'admin',
+    );
+    const res = await get('/operativa/ventas', cookie);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Resumen de ventas');
+    expect(html).toContain('Total');
+    expect(html).not.toContain('/operativa/ventas/nuevo');
+    expect(html).not.toContain('Cargá un turno');
+    expect(html).not.toContain('<details');
+    // Las rutas siguen vivas: el alta directa por POST sigue funcionando.
+    const alta = await post(
+      '/operativa/ventas',
+      {
+        fecha: '2026-11-21',
+        turno: 'night',
+        efectivo: '10',
+        tarjeta: '0',
+        transferencia: '0',
+        fiado: '0',
+      },
+      cookie,
+    );
+    expect(alta.status).toBe(302);
+    const nuevo = await get('/operativa/ventas/nuevo', cookie);
+    expect(nuevo.status).toBe(200);
+  });
+
+  it('actividades: sin botón de carga y con botón Imprimir', async () => {
+    const cookie = await registerAs(
+      'Actividades Sin Carga',
+      uniqueEmail('actividades-sin-carga'),
+      'admin',
+    );
+    const res = await get('/operativa/actividades', cookie);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Resumen diario de actividades');
+    expect(html).not.toContain('/operativa/actividades/nuevo');
+    expect(html).not.toContain('Cargá un turno');
+    expect(html).toContain('/operativa/actividades/print');
+    // El formulario de alta sigue disponible por URL.
+    const nuevo = await get('/operativa/actividades/nuevo', cookie);
+    expect(nuevo.status).toBe(200);
+  });
+
+  it('rendición: el alta la ve solo el playero, no el admin', async () => {
+    const admin = await registerAs(
+      'Rendicion Admin Oculta',
+      uniqueEmail('rendicion-admin-oculta'),
+      'admin',
+    );
+    const listadoAdmin = await get('/operativa/rendicion', admin);
+    expect(listadoAdmin.status).toBe(200);
+    expect(await listadoAdmin.text()).not.toContain('Cargá una rendición');
+
+    const playero = await registerAs(
+      'Playero Rendicion',
+      uniqueEmail('playero-rendicion'),
+      'store_manager',
+    );
+    const listadoPlayero = await get('/operativa/rendicion', playero);
+    expect(listadoPlayero.status).toBe(200);
+    expect(await listadoPlayero.text()).toContain('Cargá una rendición');
+  });
+
+  it('rendición: al guardar se actualiza la planilla del resumen diario', async () => {
+    const cookie = await registerAs(
+      'Rendicion Planilla',
+      uniqueEmail('rendicion-planilla'),
+      'admin',
+    );
+    const creada = await post(
+      '/operativa/rendicion',
+      {
+        fecha: '2026-11-23',
+        turno: 'evening',
+        inicio: '2026-11-23T14:00',
+        fin: '2026-11-23T22:00',
+        puente_entrante: '500',
+        puente_saliente: '480',
+        gnc_qty: '120',
+        gnc_price: '1400',
+        r0_surtidor: '1',
+        r0_producto: 'gnc',
+        r0_apertura: '1000',
+        r0_cierre: '1070',
+        r1_surtidor: '2',
+        r1_producto: 'gnc',
+        r1_apertura: '2000',
+        r1_cierre: '2050',
+      },
+      cookie,
+    );
+    expect(creada.status).toBe(302);
+
+    const fila = await env.DB
+      .prepare(
+        `select gnc_opening, gnc_closing, gnc_volume, gnc_sales_cents, pump_check, notes
+         from daily_activities
+         where report_date = ? and shift = 'evening'`,
+      )
+      .bind(Date.UTC(2026, 10, 23))
+      .first<{
+        gnc_opening: number;
+        gnc_closing: number;
+        gnc_volume: number;
+        gnc_sales_cents: number;
+        pump_check: number;
+        notes: string | null;
+      }>();
+    expect(fila).toBeTruthy();
+    expect(fila!.gnc_opening).toBe(3000);
+    expect(fila!.gnc_closing).toBe(3120);
+    expect(fila!.gnc_volume).toBe(120);
+    expect(fila!.gnc_sales_cents).toBe(120 * 140000);
+    // No se pisan los datos que se cargan a mano.
+    expect(fila!.pump_check).toBe(0);
+    expect(fila!.notes).toBeNull();
+  });
+
+  it('rendición: el precio GNC sale del producto de la tienda y si no hay, del formulario', async () => {
+    const cookie = await registerAs(
+      'Rendicion Precio GNC',
+      uniqueEmail('rendicion-precio-gnc'),
+      'admin',
+    );
+
+    // Sin producto GNC: se muestra el input editable y manda body.gnc_price.
+    const sinProducto = await get('/operativa/rendicion/nuevo', cookie);
+    expect(sinProducto.status).toBe(200);
+    const htmlSin = await sinProducto.text();
+    expect(htmlSin).toContain('name="gnc_price"');
+    expect(htmlSin).toContain('type="number"');
+
+    // Con producto GNC: se muestra el precio de la tienda y el input queda oculto.
+    await env.DB.prepare(
+      `insert into products (name, slug, price_cents, active, category)
+       values ('GNC Común', 'gnc-comun-test', 130000, 1, 'gnc')`,
+    ).run();
+    try {
+      const conProducto = await get('/operativa/rendicion/nuevo', cookie);
+      expect(conProducto.status).toBe(200);
+      const htmlCon = await conProducto.text();
+      expect(htmlCon).toContain('Precio GNC (desde Tienda)');
+      expect(htmlCon).toContain('name="gnc_price" type="hidden"');
+      expect(htmlCon).toContain('value="1300.00"');
+
+      // El POST prioriza el precio del producto de la tienda (130000 cents).
+      const creada = await post(
+        '/operativa/rendicion',
+        {
+          fecha: '2026-11-22',
+          turno: 'morning',
+          inicio: '2026-11-22T06:00',
+          fin: '2026-11-22T14:00',
+          puente_entrante: '1000',
+          puente_saliente: '990',
+          gnc_qty: '10',
+          gnc_price: '999',
+          r0_surtidor: '1',
+          r0_producto: 'gnc',
+          r0_apertura: '0',
+          r0_cierre: '10',
+        },
+        cookie,
+      );
+      expect(creada.status).toBe(302);
+      const id = Number(/rendicion\/(\d+)/.exec(creada.headers.get('location') ?? '')?.[1]);
+      const row = await env.DB
+        .prepare('select price_cents, gnc_sales_cents from shift_reports where id = ?')
+        .bind(id)
+        .first<{ price_cents: number; gnc_sales_cents: number }>();
+      expect(row?.price_cents).toBe(130000);
+      expect(row?.gnc_sales_cents).toBe(10 * 130000);
+    } finally {
+      // No dejar el producto GNC puesto: rompería los otros tests de rendición.
+      await env.DB.prepare(`delete from products where slug = 'gnc-comun-test'`).run();
+    }
+  });
 });
 
 describe('impresión PDF (endpoints /print)', () => {
@@ -971,5 +1183,95 @@ describe('impresión PDF (endpoints /print)', () => {
     const cookie = await registerAs('Cliente Print', uniqueEmail('cliente-print'), 'customer');
     const res = await get('/operativa/caja/print?fecha=2026-11-18', cookie);
     expect(res.status).toBe(403);
+  });
+
+  async function crearRendicion(cookie: string, fecha: string): Promise<number> {
+    const res = await post(
+      '/operativa/rendicion',
+      {
+        fecha,
+        turno: 'morning',
+        inicio: `${fecha}T06:00`,
+        fin: `${fecha}T14:00`,
+        puente_entrante: '1000.5',
+        puente_saliente: '999.25',
+        gnc_qty: '50',
+        gnc_price: '1500',
+        lubricantes_sales: '2000',
+        varios_qty: '1',
+        varios_price: '800',
+        sobre1_hora: '08:00',
+        sobre1_importe: '3000',
+        notas: 'turno de prueba para imprimir',
+        r0_surtidor: '1',
+        r0_producto: 'gnc',
+        r0_apertura: '100',
+        r0_cierre: '150',
+        r1_surtidor: '2',
+        r1_producto: 'nafta',
+        r1_apertura: '200',
+        r1_cierre: '240',
+      },
+      cookie,
+    );
+    expect(res.status).toBe(302);
+    const id = Number(/rendicion\/(\d+)/.exec(res.headers.get('location') ?? '')?.[1]);
+    expect(id).toBeGreaterThan(0);
+    return id;
+  }
+
+  it('GET /operativa/rendicion/:id/print devuelve PDF para admin y para playero', async () => {
+    const admin = await registerAs('Admin Print Rend', uniqueEmail('admin-print-rend'), 'admin');
+    const id = await crearRendicion(admin, '2026-11-19');
+
+    const paraAdmin = await get(`/operativa/rendicion/${id}/print`, admin);
+    await expectPdf(paraAdmin, 'rendicion-2026-11-19.pdf');
+
+    const playero = await registerAs('Playero Print Rend', uniqueEmail('playero-print-rend'), 'store_manager');
+    const paraPlayero = await get(`/operativa/rendicion/${id}/print`, playero);
+    await expectPdf(paraPlayero, 'rendicion-2026-11-19.pdf');
+  });
+
+  it('GET /operativa/rendicion/:id/print sin sesión redirige a login', async () => {
+    const res = await get('/operativa/rendicion/1/print');
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/login');
+  });
+
+  it('GET /operativa/rendicion/:id/print con rol cliente devuelve 403', async () => {
+    const admin = await registerAs('Admin Print Rend 2', uniqueEmail('admin-print-rend-2'), 'admin');
+    const id = await crearRendicion(admin, '2026-11-20');
+    const cliente = await registerAs('Cliente Print Rend', uniqueEmail('cliente-print-rend'), 'customer');
+    const res = await get(`/operativa/rendicion/${id}/print`, cliente);
+    expect(res.status).toBe(403);
+    const html = await res.text();
+    expect(html).toContain('No tienes permiso');
+  });
+
+  it('las pantallas de caja y resumen muestran el botón Imprimir', async () => {
+    const admin = await registerAs('Admin Boton Imprimir', uniqueEmail('admin-boton-imprimir'), 'admin');
+
+    const caja = await get('/operativa/caja?fecha=2026-11-18', admin);
+    expect(caja.status).toBe(200);
+    const htmlCaja = await caja.text();
+    expect(htmlCaja).toContain('/operativa/caja/print?fecha=2026-11-18');
+    expect(htmlCaja).toContain('>Imprimir<');
+
+    const resumen = await get('/operativa/resumen-diario?fecha=2026-11-18', admin);
+    expect(resumen.status).toBe(200);
+    expect(await resumen.text()).toContain('/operativa/actividades/print?fecha=2026-11-18');
+
+    const detalle = await get('/operativa/rendicion', admin);
+    expect(detalle.status).toBe(200);
+  });
+
+  it('el detalle de la rendición enlaza al PDF con el botón Imprimir', async () => {
+    const admin = await registerAs('Admin Detalle Print', uniqueEmail('admin-detalle-print'), 'admin');
+    const id = await crearRendicion(admin, '2026-11-24');
+    const detalle = await get(`/operativa/rendicion/${id}`, admin);
+    expect(detalle.status).toBe(200);
+    const html = await detalle.text();
+    expect(html).toContain(`/operativa/rendicion/${id}/print`);
+    expect(html).toContain('>Imprimir<');
   });
 });

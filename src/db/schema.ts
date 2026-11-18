@@ -553,7 +553,7 @@ export const salesSummaries = sqliteTable(
     storeIdx: index('sales_summaries_store_idx').on(t.storeId, t.reportDate),
     shiftChk: check(
       'sales_summaries_shift_chk',
-      sql`shift in ('morning','evening','night','adicional')`,
+      sql`shift in ('morning','evening','night')`,
     ),
     amountsChk: check(
       'sales_summaries_amounts_chk',
@@ -589,7 +589,7 @@ export const dailyActivities = sqliteTable(
     storeIdx: index('daily_activities_store_idx').on(t.storeId, t.reportDate),
     shiftChk: check(
       'daily_activities_shift_chk',
-      sql`shift in ('morning','evening','night','adicional')`,
+      sql`shift in ('morning','evening','night')`,
     ),
     gncChk: check(
       'daily_activities_gnc_chk',
@@ -764,17 +764,6 @@ export const dailyActivitySummary = sqliteTable(
     nocheFacturacionServicios: integer('noche_facturacion_servicios').notNull().default(0),
     nocheFacturacionMiniMercado: integer('noche_facturacion_mini_mercado').notNull().default(0),
     nocheTotalRecaudacion: integer('noche_total_recaudacion').notNull().default(0),
-    adicionalGncIngreso: integer('adicional_gnc_ingreso').notNull().default(0),
-    adicionalGncMermasExcedencias: integer('adicional_gnc_mermas_excedencias').notNull().default(0),
-    adicionalGncPorcentaje: real('adicional_gnc_porcentaje').notNull().default(0),
-    adicionalGncVentasM3: integer('adicional_gnc_ventas_m3').notNull().default(0),
-    adicionalGncPrecioUnitario: integer('adicional_gnc_precio_unitario').notNull().default(0),
-    adicionalGncImporteTotal: integer('adicional_gnc_importe_total').notNull().default(0),
-    adicionalLubricantesVariosImporte: integer('adicional_lubricantes_varios_importe').notNull().default(0),
-    adicionalFacturadoPlayeros: integer('adicional_facturado_playeros').notNull().default(0),
-    adicionalFacturacionServicios: integer('adicional_facturacion_servicios').notNull().default(0),
-    adicionalFacturacionMiniMercado: integer('adicional_facturacion_mini_mercado').notNull().default(0),
-    adicionalTotalRecaudacion: integer('adicional_total_recaudacion').notNull().default(0),
     observaciones: text('observaciones'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

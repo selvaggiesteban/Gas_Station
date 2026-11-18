@@ -112,6 +112,8 @@ describe('panel de usuario', () => {
       password: 'supersecret1',
     });
     const cookie = sessionCookie(login);
+    // El login otorga +10 puntos: con eso alcanza para ver el progreso del
+    // desafío en /app (1 fila de log por día por usuario).
     const challengeId = await insertChallenge({
       title: 'Sumá 50 puntos',
       goalValue: 50,
@@ -232,20 +234,40 @@ describe('panel de usuario', () => {
     expect(html).not.toMatch(/battle/i);
   });
 
-  it('el home del admin oculta puntos y movimientos y muestra el resumen de operativa', async () => {
+  it('el home del admin oculta puntos y muestra los inicios de sesión de todos los usuarios', async () => {
     const email = uniqueEmail('admin-inicio');
     const reg = await register('Ana Admin', email);
-    const cookie = sessionCookie(reg);
+    let cookie = sessionCookie(reg);
     await env.DB.prepare("update users set role = 'admin' where email = ?")
       .bind(email)
       .run();
+    // Otro usuario inicia sesión: sus inicios de sesión deben verse en la
+    // vista del admin (control de puntualidad).
+    const empleadaEmail = uniqueEmail('empleada-turno');
+    await register('Clara Empleada', empleadaEmail);
+    const empleadaLogin = await post('/login', {
+      email: empleadaEmail,
+      password: 'supersecret1',
+    });
+    expect(empleadaLogin.status).toBe(302);
+    // El login del admin también queda registrado (con 0 puntos).
+    const adminLogin = await post('/login', {
+      email,
+      password: 'supersecret1',
+    });
+    expect(adminLogin.status).toBe(302);
+    cookie = sessionCookie(adminLogin);
     const app = await get('/app', cookie);
     expect(app.status).toBe(200);
     const html = await app.text();
     expect(html).toContain('Ana Admin');
     expect(html).not.toContain('Tenés');
     expect(html).not.toContain('Racha actual');
-    expect(html).not.toContain('Últimos movimientos');
+    expect(html).toContain('Últimos movimientos');
+    expect(html).toContain('Ana Admin — Inicio de sesión');
+    expect(html).toContain('Clara Empleada — Inicio de sesión');
+    // Las entradas con 0 puntos no muestran "+0 pts".
+    expect(html).not.toMatch(/Inicio de sesión.*pts/);
     expect(html).toContain('Resumen de operativa');
     expect(html).toContain('Caja de hoy');
     expect(html).toContain('GNC de hoy');

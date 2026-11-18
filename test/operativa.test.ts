@@ -431,7 +431,7 @@ describe('operativa', () => {
     );
     const antes = await count('shift_reports');
 
-    const creada = await post(
+    const response = await post(
       '/operativa/rendicion',
       {
         fecha: '2026-11-04',
@@ -441,21 +441,21 @@ describe('operativa', () => {
         puente_entrante: '1000.25',
         puente_saliente: '900.75',
         notas: 'turno tarde',
+        gnc_qty: '376',
+        gnc_price: '1250',
         r0_surtidor: '1',
         r0_producto: 'nafta',
         r0_apertura: '1000.5',
         r0_cierre: '1250.5',
-        r0_precio: '1200',
         r1_surtidor: '3',
         r1_producto: 'gasoil',
         r1_apertura: '500',
         r1_cierre: '625.5',
-        r1_precio: '1300',
       },
       cookie,
     );
-    expect(creada.status).toBe(302);
-    expect(creada.headers.get('location')).toMatch(
+    expect(response.status).toBe(302);
+    expect(response.headers.get('location')).toMatch(
       /^\/operativa\/rendicion\/\d+\?aviso=1$/,
     );
     expect(await count('shift_reports')).toBe(antes + 1);
@@ -478,27 +478,25 @@ describe('operativa', () => {
     expect(report!.cashier_id).toBeTruthy();
 
     const readings = await env.DB.prepare(
-      'select * from shift_report_readings where report_id = ? order by surtidor',
+      'select * from shift_report_readings where report_id = ? order by manguera',
     )
       .bind(report!.id)
       .all<{
-        surtidor: number;
+        manguera: number;
         product: string;
         opening_reading: number;
         closing_reading: number;
         volume: number;
-        price_cents: number;
         total_cents: number;
       }>();
     expect(readings.results.length).toBe(2);
     const nafta = readings.results[0]!;
     expect(nafta.product).toBe('nafta');
     expect(nafta.volume).toBe(250);
-    expect(nafta.price_cents).toBe(120000);
-    expect(nafta.total_cents).toBe(250 * 120000);
+    expect(nafta.total_cents).toBe(0); // precio está en shift_reports.price_cents
     const gasoil = readings.results[1]!;
     expect(gasoil.volume).toBeCloseTo(125.5, 5);
-    expect(gasoil.total_cents).toBe(Math.round(125.5 * 130000));
+    expect(gasoil.total_cents).toBe(0); // precio está en shift_reports.price_cents
 
     const detalle = await get(
       `/operativa/rendicion/${report!.id}`,
@@ -506,7 +504,7 @@ describe('operativa', () => {
     );
     expect(detalle.status).toBe(200);
     const html = await detalle.text();
-    const sumaEsperada = 250 * 120000 + Math.round(125.5 * 130000);
+    const sumaEsperada = 376 * 125000; // gnc_qty * priceCents
     expect(html).toContain(
       new Intl.NumberFormat('es-AR', {
         style: 'currency',
@@ -712,9 +710,9 @@ describe('operativa', () => {
       '/operativa/rendicion',
       {
         fecha: '2026-11-05',
-        turno: 'adicional',
-        inicio: '2026-11-05T08:00',
-        fin: '2026-11-05T12:00',
+        turno: 'morning',
+        inicio: '2026-11-05T06:00',
+        fin: '2026-11-05T14:00',
         puente_entrante: '1000.5',
         puente_saliente: '900.25',
         gnc_qty: '100',
@@ -727,11 +725,30 @@ describe('operativa', () => {
         sobre2_hora: '11:00',
         sobre2_importe: '3500',
         notas: 'observación del turno',
-        r0_surtidor: '2',
+        r0_surtidor: '1',
         r0_producto: 'gnc',
         r0_apertura: '100',
         r0_cierre: '200',
-        r0_precio: '1500',
+        r1_surtidor: '2',
+        r1_producto: 'gnc',
+        r1_apertura: '200',
+        r1_cierre: '300',
+        r2_surtidor: '3',
+        r2_producto: 'gnc',
+        r2_apertura: '300',
+        r2_cierre: '400',
+        r3_surtidor: '4',
+        r3_producto: 'gnc',
+        r3_apertura: '400',
+        r3_cierre: '500',
+        r4_surtidor: '5',
+        r4_producto: 'gnc',
+        r4_apertura: '500',
+        r4_cierre: '600',
+        r5_surtidor: '6',
+        r5_producto: 'gnc',
+        r5_apertura: '600',
+        r5_cierre: '700',
       },
       cookie,
     );
@@ -746,9 +763,9 @@ describe('operativa', () => {
       .bind(id)
       .first<Record<string, unknown>>();
     expect(row).toBeTruthy();
-    expect(row!.shift).toBe('adicional');
+    expect(row!.shift).toBe('morning');
     expect(row!.gnc_qty).toBe(100);
-    expect(row!.gnc_price_cents).toBe(150000);
+    expect(row!.price_cents).toBe(150000);
     expect(row!.gnc_sales_cents).toBe(100 * 150000);
     expect(row!.lubricantes_sales_cents).toBe(1000000);
     expect(row!.varios_sales_cents).toBe(2 * 80000);
@@ -818,7 +835,8 @@ describe('operativa', () => {
     expect(html).toContain('Resumen diario de actividades');
     expect(html).toContain('TOTAL RECAUDACIÓN');
     expect(html).toContain('Mañana');
-    expect(html).toContain('Adicional');
+    expect(html).toContain('Tarde');
+    expect(html).toContain('Noche');
 
     const guardado = await post(
       '/operativa/resumen-diario/observaciones',
@@ -830,36 +848,6 @@ describe('operativa', () => {
     const tras = await get('/operativa/resumen-diario?fecha=2026-11-05', admin);
     expect(tras.status).toBe(200);
     expect(await tras.text()).toContain('todo en orden');
-  });
-
-  it('caja: el turno adicional entra en las entradas y en el total de turnos', async () => {
-    const cookie = await registerAs(
-      'Caja Adicional',
-      uniqueEmail('caja-adicional'),
-      'admin',
-    );
-    const fecha = '2026-11-11';
-    const dia = Date.UTC(2026, 10, 11);
-
-    const abierta = await post('/operativa/caja', { fecha, apertura: '0' }, cookie);
-    expect(abierta.status).toBe(302);
-
-    await env.DB.prepare(
-      `
-      insert into sales_summaries (store_id, report_date, shift, cash_cents, card_cents, transfer_cents, credit_cents, total_cents, notes)
-      values (1, ?, 'adicional', 0, 0, 0, 0, 75000, 'test')
-    `,
-    )
-      .bind(dia)
-      .run();
-
-    const vista = await get(`/operativa/caja?fecha=${fecha}`, cookie);
-    expect(vista.status).toBe(200);
-    const html = await vista.text();
-    expect(html).toContain('TURNO ADICIONAL');
-    // totalTurnos = 0 + 0 + 0 + 75000 (adicional)
-    expect(html).toContain('TOTAL TURNOS');
-    expect(html).toContain(formatArs(75000));
   });
 
   it('resumen diario: lub/varios desde la rendición, facturado playeros y facturación manual', async () => {

@@ -446,7 +446,7 @@ export const userActivity = sqliteTable(
   }),
 );
 
-export const SHIFT_VALUES = ['morning', 'evening', 'night', 'adicional'] as const;
+export const SHIFT_VALUES = ['morning', 'evening', 'night'] as const;
 
 export const CASH_STATUS_VALUES = ['open', 'closed'] as const;
 
@@ -613,7 +613,8 @@ export const shiftReports = sqliteTable(
       onDelete: 'set null',
     }),
     gncQty: integer('gnc_qty').notNull().default(0),
-    gncPriceCents: integer('gnc_price_cents').notNull().default(0),
+    // Precio único por turno (GNC)
+    priceCents: integer('price_cents').notNull().default(0),
     gncSalesCents: integer('gnc_sales_cents').notNull().default(0),
     lubricantesSalesCents: integer('lubricantes_sales_cents').notNull().default(0),
     variosQty: integer('varios_qty').notNull().default(0),
@@ -650,7 +651,7 @@ export const shiftReports = sqliteTable(
     cashierIdx: index('shift_reports_cashier_idx').on(t.cashierId),
     shiftChk: check(
       'shift_reports_shift_chk',
-      sql`shift in ('morning','evening','night','adicional')`,
+      sql`shift in ('morning','evening','night')`,
     ),
     windowChk: check('shift_reports_window_chk', sql`shift_end > shift_start`),
   }),
@@ -663,23 +664,22 @@ export const shiftReportReadings = sqliteTable(
     reportId: integer('report_id')
       .notNull()
       .references(() => shiftReports.id, { onDelete: 'cascade' }),
-    surtidor: integer('surtidor').notNull(),
+    manguera: integer('manguera').notNull(),
     product: text('product', { enum: FUEL_PRODUCT_VALUES }).notNull(),
     openingReading: real('opening_reading').notNull().default(0),
     closingReading: real('closing_reading').notNull().default(0),
     volume: real('volume').notNull().default(0),
-    priceCents: integer('price_cents').notNull().default(0),
     totalCents: integer('total_cents').notNull().default(0),
   },
   (t) => ({
     reportIdx: index('shift_report_readings_report_idx').on(t.reportId),
-    surtidorUq: uniqueIndex('shift_report_readings_surtidor_uq').on(
+    mangueraUq: uniqueIndex('shift_report_readings_manguera_uq').on(
       t.reportId,
-      t.surtidor,
+      t.manguera,
     ),
-    surtidorChk: check(
-      'shift_report_readings_surtidor_chk',
-      sql`surtidor between 1 and 3`,
+    mangueraChk: check(
+      'shift_report_readings_manguera_chk',
+      sql`manguera between 1 and 6`,
     ),
     productChk: check(
       'shift_report_readings_product_chk',
@@ -691,7 +691,7 @@ export const shiftReportReadings = sqliteTable(
     ),
     totalChk: check(
       'shift_report_readings_total_chk',
-      sql`price_cents >= 0 and total_cents >= 0`,
+      sql`total_cents >= 0`,
     ),
   }),
 );
@@ -827,5 +827,25 @@ export const auditLogs = sqliteTable(
     resourceIdx: index('audit_logs_resource_idx').on(t.resource, t.resourceId),
     createdAtIdx: index('audit_logs_created_at_idx').on(t.createdAt),
     actionIdx: index('audit_logs_action_idx').on(t.action),
+  }),
+);
+
+export const userActivityLog = sqliteTable(
+  'user_activity_log',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    type: text('type').notNull(),
+    turno: integer('turno'),
+    expectedTime: text('expected_time'),
+    actualTime: text('actual_time'),
+    createdAt: createdAt(),
+  },
+  (t) => ({
+    userIdIdx: index('user_activity_log_user_idx').on(t.userId),
+    typeIdx: index('user_activity_log_type_idx').on(t.type),
+    createdAtIdx: index('user_activity_log_created_idx').on(t.createdAt),
   }),
 );

@@ -21,6 +21,11 @@ import {
   stores,
 } from '../db/schema';
 import { ensureDefaultStore } from '../services/orders';
+import pdfMake from 'pdfmake/build/pdfmake';
+import pdfFonts from 'pdfmake/build/vfs_fonts';
+
+// @ts-expect-error - pdfmake types don't match exactly
+pdfMake.vfs = (pdfFonts as any).vfs;
 
 export const operativaRoutes = new Hono<AppEnv>();
 
@@ -41,7 +46,6 @@ const SHIFT_LABELS: Record<Shift, string> = {
   morning: 'Mañana',
   evening: 'Tarde',
   night: 'Noche',
-  adicional: 'Adicional',
 };
 
 const FUEL_LABELS: Record<Fuel, string> = {
@@ -272,11 +276,10 @@ function shiftOptions(selected?: string): string {
 }
 
 // Prefijos de columnas por turno en daily_activity_summary
-const MANUAL_PREFIX: Record<Shift, 'manana' | 'tarde' | 'noche' | 'adicional'> = {
+const MANUAL_PREFIX: Record<Shift, 'manana' | 'tarde' | 'noche'> = {
   morning: 'manana',
   evening: 'tarde',
   night: 'noche',
-  adicional: 'adicional',
 };
 
 // Facturación de servicios/minimercado: carga manual del admin en el resumen diario
@@ -291,12 +294,12 @@ function manualFacturacion(
     if (p === 'manana') return summary.mananaFacturacionServicios;
     if (p === 'tarde') return summary.tardeFacturacionServicios;
     if (p === 'noche') return summary.nocheFacturacionServicios;
-    return summary.adicionalFacturacionServicios;
+    return 0;
   }
   if (p === 'manana') return summary.mananaFacturacionMiniMercado;
   if (p === 'tarde') return summary.tardeFacturacionMiniMercado;
   if (p === 'noche') return summary.nocheFacturacionMiniMercado;
-  return summary.adicionalFacturacionMiniMercado;
+  return 0;
 }
 
 function fuelOptions(selected?: string): string {
@@ -674,16 +677,14 @@ operativaRoutes.get('/operativa/caja', async (c) => {
   const cash = cashRows[0];
   const prevOpening = cash ? cash.openingCents : 0;
 
-  // Turnos: morning, evening, night, adicional → total_cents
+  // Turnos: morning, evening, night → total_cents
   const turnoManana = turnos.find(t => t.shift === 'morning');
   const turnoTarde = turnos.find(t => t.shift === 'evening');
   const turnoNoche = turnos.find(t => t.shift === 'night');
-  const turnoAdicional = turnos.find(t => t.shift === 'adicional');
   const totalTurnos =
     (turnoManana?.totalCents ?? 0) +
     (turnoTarde?.totalCents ?? 0) +
-    (turnoNoche?.totalCents ?? 0) +
-    (turnoAdicional?.totalCents ?? 0);
+    (turnoNoche?.totalCents ?? 0);
 
   // Líneas manuales
   const entradasManuales = lineRows.filter(l => l.side === 'entrada' && l.kind === 'movimiento');
@@ -717,7 +718,6 @@ operativaRoutes.get('/operativa/caja', async (c) => {
     { label: 'TURNO MAÑANA', amount: turnoManana?.totalCents ?? 0, isSubtotal: false },
     { label: 'TURNO TARDE', amount: turnoTarde?.totalCents ?? 0, isSubtotal: false },
     { label: 'TURNO NOCHE', amount: turnoNoche?.totalCents ?? 0, isSubtotal: false },
-    { label: 'TURNO ADICIONAL', amount: turnoAdicional?.totalCents ?? 0, isSubtotal: false },
     { label: 'TOTAL TURNOS', amount: totalTurnos, isSubtotal: true },
   ].concat(
     entradasManuales.map(l => ({ label: l.detail.toUpperCase(), amount: l.amountCents, isSubtotal: false })),
@@ -1878,12 +1878,11 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
   ]);
 
   // Organize by shift
-  const shifts = ['morning', 'evening', 'night', 'adicional'] as const;
+  const shifts = ['morning', 'evening', 'night'] as const;
   const shiftLabels: Record<string, string> = {
     morning: 'Mañana',
     evening: 'Tarde',
     night: 'Noche',
-    adicional: 'Adicional',
   };
 
   // Resumen diario guardado: observaciones + facturación manual del admin
@@ -2141,8 +2140,6 @@ operativaRoutes.post('/operativa/resumen-diario/facturacion', requireRole('admin
     'mini_evening',
     'servicios_night',
     'mini_night',
-    'servicios_adicional',
-    'mini_adicional',
   ];
   const importes: Record<string, number> = {};
   for (const campo of campos) {
@@ -2164,8 +2161,6 @@ operativaRoutes.post('/operativa/resumen-diario/facturacion', requireRole('admin
     tardeFacturacionMiniMercado: importes.mini_evening,
     nocheFacturacionServicios: importes.servicios_night,
     nocheFacturacionMiniMercado: importes.mini_night,
-    adicionalFacturacionServicios: importes.servicios_adicional,
-    adicionalFacturacionMiniMercado: importes.mini_adicional,
     updatedAt: new Date(),
   };
   const existing = await db
@@ -2193,15 +2188,545 @@ operativaRoutes.post('/operativa/resumen-diario/facturacion', requireRole('admin
   return c.redirect(`/operativa/resumen-diario?fecha=${dateInput(fecha)}&aviso=1`);
 });
 
+// ==================== PDF PRINT ENDPOINTS ====================
+
+// Helper: format currency
+function formatArsPdf(cents: number): string {
+  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(cents / 100);
+}
+
+// Helper: format number with thousands separator
+function formatNumPdf(n: number): string {
+  return new Intl.NumberFormat('es-AR').format(n);
+}
+
+// ==================== PDF SHARED CONSTANTS ====================
+
+const PDF_SHIFTS = ['morning', 'evening', 'night'] as const;
+const PDF_SHIFT_LABELS: Record<string, string> = { morning: 'Mañana', evening: 'Tarde', night: 'Noche' };
+
+// ==================== PDF HELPER FUNCTIONS ====================
+
+// Base table cell style for bold variants
+const baseTableCellStyle = { fontSize: 8, color: '#111111' };
+const boldTableCellStyle = { ...baseTableCellStyle, bold: true };
+
+function buildActivitiesTable(activities: any[], shiftReportsData: any[], shifts: string[] = [...PDF_SHIFTS], shiftLabels: Record<string, string> = PDF_SHIFT_LABELS): any {
+  const rows: any[][] = [
+    [
+      { text: 'Turno', style: 'tableHeader' },
+      { text: 'Apertura GNC (m³)', style: 'tableHeader' },
+      { text: 'Cierre GNC (m³)', style: 'tableHeader' },
+      { text: 'Volumen (m³)', style: 'tableHeader' },
+      { text: 'Ventas GNC ($)', style: 'tableHeader' },
+      { text: 'Revisión manguera', style: 'tableHeader' },
+      { text: 'Notas', style: 'tableHeader' },
+    ],
+  ];
+
+  for (const shift of shifts) {
+    const act = activities.find((a) => a.shift === shift);
+    const sr = shiftReportsData.find((s) => s.shift === shift);
+    const revisado = act?.pumpCheck ? 'Sí' : 'No';
+    const gncVolumen = act?.gncVolume ?? sr?.gncQty ?? 0;
+    const gncVentas = sr?.gncSalesCents ?? 0;
+    const notas = act?.notes ?? '';
+    rows.push([
+      { text: shiftLabels[shift], style: 'tableCell' },
+      { text: formatNumPdf(act?.gncOpening ?? 0), style: 'tableCell' },
+      { text: formatNumPdf(act?.gncClosing ?? 0), style: 'tableCell' },
+      { text: formatNumPdf(gncVolumen), style: 'tableCell' },
+      { text: formatArsPdf(gncVentas), style: 'tableCell' },
+      { text: revisado, style: 'tableCell' },
+      { text: notas, style: 'tableCell' },
+    ]);
+  }
+
+  // Add totals row
+  const totalGncIngreso = activities.reduce((sum, a) => sum + (a.gncOpening ?? 0), 0);
+  const totalGncCierre = activities.reduce((sum, a) => sum + (a.gncClosing ?? 0), 0);
+  const totalGncVolumen = activities.reduce((sum, a) => sum + (a.gncVolume ?? 0), 0);
+  const totalGncVentas = shiftReportsData.reduce((sum, s) => sum + (s.gncSalesCents ?? 0), 0);
+
+  rows.push([
+    { text: 'TOTAL', style: boldTableCellStyle },
+    { text: formatNumPdf(totalGncIngreso), style: boldTableCellStyle },
+    { text: formatNumPdf(totalGncCierre), style: boldTableCellStyle },
+    { text: formatNumPdf(totalGncVolumen), style: boldTableCellStyle },
+    { text: formatArsPdf(totalGncVentas), style: boldTableCellStyle },
+    { text: '', style: baseTableCellStyle },
+    { text: '', style: baseTableCellStyle },
+  ]);
+
+  return {
+    layout: 'lightHorizontalLines',
+    table: {
+      headerRows: 1,
+      widths: ['auto', 'auto', 'auto', 'auto', 'auto', 'auto', '*'],
+      body: rows,
+    },
+  };
+}
+
+function buildFacturacionTable(summary: any, shifts: string[] = [...PDF_SHIFTS]): any {
+  if (!summary) {
+    return { text: 'Sin datos de facturación manual', style: 'tableCell', margin: [0, 5, 0, 0] };
+  }
+
+  const rows: any[][] = [
+    [
+      { text: 'Turno', style: 'tableHeader' },
+      { text: 'Servicios ($)', style: 'tableHeader' },
+      { text: 'MiniMercado ($)', style: 'tableHeader' },
+      { text: 'Total ($)', style: 'tableHeader' },
+    ],
+  ];
+
+  let totalServicios = 0;
+  let totalMini = 0;
+
+  for (const shift of shifts) {
+    const p = PDF_SHIFT_LABELS[shift];
+    const serv = summary[`${p}FacturacionServicios`] ?? 0;
+    const mini = summary[`${p}FacturacionMiniMercado`] ?? 0;
+    const total = serv + mini;
+    totalServicios += serv;
+    totalMini += mini;
+    rows.push([
+      { text: PDF_SHIFT_LABELS[shift], style: 'tableCell' },
+      { text: formatArsPdf(serv), style: 'tableCell' },
+      { text: formatArsPdf(mini), style: 'tableCell' },
+      { text: formatArsPdf(total), style: 'tableCell' },
+    ]);
+  }
+
+  rows.push([
+    { text: 'TOTAL', style: boldTableCellStyle },
+    { text: formatArsPdf(totalServicios), style: boldTableCellStyle },
+    { text: formatArsPdf(totalMini), style: boldTableCellStyle },
+    { text: formatArsPdf(totalServicios + totalMini), style: boldTableCellStyle },
+  ]);
+
+  return {
+    layout: 'lightHorizontalLines',
+    table: {
+      headerRows: 1,
+      widths: ['auto', 'auto', 'auto', 'auto'],
+      body: rows,
+    },
+  };
+}
+
+function buildCajaTable(cashDay: any, shiftReportsData: any[], shifts: string[] = [...PDF_SHIFTS]): any {
+  const prevOpening = cashDay?.openingCents ?? 0;
+
+  const turnoManana = shiftReportsData.find((t) => t.shift === 'morning');
+  const turnoTarde = shiftReportsData.find((t) => t.shift === 'evening');
+  const turnoNoche = shiftReportsData.find((t) => t.shift === 'night');
+
+  const totalTurnos =
+    (turnoManana?.totalSalesCents ?? 0) +
+    (turnoTarde?.totalSalesCents ?? 0) +
+    (turnoNoche?.totalSalesCents ?? 0);
+
+  const rows: any[][] = [
+    [
+      { text: 'Concepto', style: 'tableHeader' },
+      { text: 'Importe ($)', style: 'tableHeader' },
+    ],
+  ];
+
+  rows.push([{ text: 'SALDO DÍA ANTERIOR', style: baseTableCellStyle }, { text: formatArsPdf(prevOpening), style: baseTableCellStyle }]);
+  rows.push([{ text: 'TURNO MAÑANA', style: baseTableCellStyle }, { text: formatArsPdf(turnoManana?.totalSalesCents ?? 0), style: baseTableCellStyle }]);
+  rows.push([{ text: 'TURNO TARDE', style: baseTableCellStyle }, { text: formatArsPdf(turnoTarde?.totalSalesCents ?? 0), style: baseTableCellStyle }]);
+  rows.push([{ text: 'TURNO NOCHE', style: baseTableCellStyle }, { text: formatArsPdf(turnoNoche?.totalSalesCents ?? 0), style: baseTableCellStyle }]);
+  rows.push([
+    { text: 'TOTAL TURNOS', style: boldTableCellStyle },
+    { text: formatArsPdf((turnoManana?.totalSalesCents ?? 0) + (turnoTarde?.totalSalesCents ?? 0) + (turnoNoche?.totalSalesCents ?? 0)), style: boldTableCellStyle },
+  ]);
+
+  // Add manual entries if any
+  // For now, just show the structure
+
+  return {
+    layout: 'lightHorizontalLines',
+    table: {
+      headerRows: 1,
+      widths: ['*', 'auto'],
+      body: rows,
+    },
+  };
+}
+
+// Generate PDF for Resumen Diario de Actividades
+operativaRoutes.get('/operativa/actividades/print', requireRole('admin'), async (c) => {
+  const db = dbOf(c);
+  const access = await resolveStore(c, db, c.req.query('tienda'));
+  if ('error' in access) return denied(c, access.error);
+  const fecha = str(c.req.query('fecha'));
+  const day = fecha ? dayStart(fecha) : null;
+  const selected = day ?? utcToday();
+  const fechaStr = dateInput(selected);
+
+  // Get all data for the day
+  const [activities, shiftReportsData, cash, summary] = await Promise.all([
+    db
+      .select()
+      .from(dailyActivities)
+      .where(
+        and(
+          eq(dailyActivities.storeId, access.storeId),
+          gte(dailyActivities.reportDate, selected),
+          lt(dailyActivities.reportDate, nextDay(selected)),
+        ),
+      )
+      .orderBy(asc(dailyActivities.shift)),
+    db
+      .select()
+      .from(shiftReports)
+      .where(
+        and(
+          eq(shiftReports.storeId, access.storeId),
+          gte(shiftReports.reportDate, selected),
+          lt(shiftReports.reportDate, nextDay(selected)),
+        ),
+      )
+      .orderBy(asc(shiftReports.shift)),
+    db
+      .select()
+      .from(cashDays)
+      .where(
+        and(
+          eq(cashDays.storeId, access.storeId),
+          gte(cashDays.reportDate, selected),
+          lt(cashDays.reportDate, nextDay(selected)),
+        ),
+      )
+      .limit(1),
+    db
+      .select()
+      .from(dailyActivitySummary)
+      .where(
+        and(
+          eq(dailyActivitySummary.storeId, access.storeId),
+          eq(dailyActivitySummary.reportDate, selected),
+        ),
+      )
+      .limit(1),
+  ]);
+
+  // Use shared constants
+  const shifts = [...PDF_SHIFTS];
+  const shiftLabels = PDF_SHIFT_LABELS;
+
+  const existingSummary = summary[0];
+
+  // Build PDF document definition
+  const docDefinition: any = {
+    pageOrientation: 'landscape',
+    pageMargins: [20, 20, 20, 20],
+    content: [
+      {
+        text: 'LESCO GNC - Resumen Diario de Actividades',
+        style: 'header',
+        alignment: 'center',
+        margin: [0, 0, 0, 5],
+      },
+      {
+        text: `Fecha: ${fechaStr} | Tienda: ${access.storeId}`,
+        style: 'subheader',
+        alignment: 'center',
+        margin: [0, 0, 0, 10],
+      },
+      // Table: Actividades por turno
+      {
+        text: 'Actividades por Turno',
+        style: 'sectionHeader',
+        margin: [0, 10, 0, 5],
+      },
+      buildActivitiesTable(activities, shiftReportsData, shifts, shiftLabels),
+      { text: '', margin: [0, 10, 0, 0] }, // spacer
+      // Table: Facturación manual (servicios/minimercado)
+      {
+        text: 'Facturación Manual (Admin)',
+        style: 'sectionHeader',
+        margin: [0, 10, 0, 5],
+      },
+      buildFacturacionTable(existingSummary, shifts),
+      { text: '', margin: [0, 10, 0, 0] }, // spacer
+      // Table: Recaudación / Caja
+      {
+        text: 'Resumen de Caja',
+        style: 'sectionHeader',
+        margin: [0, 10, 0, 5],
+      },
+      buildCajaTable(cash[0], shiftReportsData, shifts),
+      { text: '', margin: [0, 10, 0, 0] }, // spacer
+      // Observaciones
+      ...(existingSummary?.observaciones
+        ? [
+            { text: '', margin: [0, 10, 0, 0] },
+            {
+              text: `Observaciones: ${existingSummary.observaciones}`,
+              style: 'observaciones',
+              margin: [0, 5, 0, 0],
+            },
+          ]
+        : []),
+    ],
+    styles: {
+      header: { fontSize: 16, bold: true, color: '#111111' },
+      subheader: { fontSize: 11, color: '#666666' },
+      sectionHeader: { fontSize: 12, bold: true, color: '#333333' },
+      tableHeader: { bold: true, fontSize: 8, fillColor: '#f0f0f0', color: '#111111' },
+      tableCell: { fontSize: 8, color: '#111111' },
+      observaciones: { fontSize: 9, italics: true, color: '#444444' },
+    },
+    defaultStyle: { font: 'Helvetica' },
+  };
+
+  const pdfDoc = pdfMake.createPdf(docDefinition);
+  const pdfBuffer: Uint8Array = await pdfDoc.getBuffer().then((buffer: Buffer) => new Uint8Array(buffer));
+
+  return new Response(pdfBuffer as unknown as BodyInit, {
+    headers: {
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="resumen-diario-${fechaStr}.pdf"`,
+    },
+  });
+});
+
+// Generate PDF for Caja Diaria
+operativaRoutes.get('/operativa/caja/print', requireRole('admin'), async (c) => {
+  const db = dbOf(c);
+  const access = await resolveStore(c, db, c.req.query('tienda'));
+  if ('error' in access) return denied(c, access.error);
+  const fecha = str(c.req.query('fecha'));
+  const day = fecha ? dayStart(fecha) : null;
+  const selected = day ?? utcToday();
+  const fechaStr = dateInput(selected);
+
+  // Get data
+  const [cash, shiftReportsData, lines] = await Promise.all([
+    db
+      .select()
+      .from(cashDays)
+      .where(
+        and(
+          eq(cashDays.storeId, access.storeId),
+          eq(cashDays.reportDate, selected),
+        ),
+      )
+      .limit(1),
+    db
+      .select()
+      .from(shiftReports)
+      .where(
+        and(
+          eq(shiftReports.storeId, access.storeId),
+          gte(shiftReports.reportDate, selected),
+          lt(shiftReports.reportDate, nextDay(selected)),
+        ),
+      )
+      .orderBy(asc(shiftReports.shift)),
+    db
+      .select()
+      .from(cashLines)
+      .where(
+        and(
+          eq(cashLines.storeId, access.storeId),
+          eq(cashLines.reportDate, utcToday()),
+        ),
+      )
+      .orderBy(asc(cashLines.sort)),
+  ]);
+
+  const cashDay = cash[0];
+  const prevOpening = cashDay?.openingCents ?? 0;
+
+  const turnoManana = shiftReportsData.find((t) => t.shift === 'morning');
+  const turnoTarde = shiftReportsData.find((t) => t.shift === 'evening');
+  const turnoNoche = shiftReportsData.find((t) => t.shift === 'night');
+
+  const totalTurnos =
+    (turnoManana?.totalSalesCents ?? 0) +
+    (turnoTarde?.totalSalesCents ?? 0) +
+    (turnoNoche?.totalSalesCents ?? 0);
+
+  // Build document
+  const docDefinition: any = {
+    pageOrientation: 'portrait',
+    pageMargins: [20, 20, 20, 20],
+    content: [
+      {
+        text: 'LESCO GNC - Caja Diaria',
+        style: 'header',
+        alignment: 'center',
+        margin: [0, 0, 0, 5],
+      },
+      {
+        text: `Fecha: ${fechaStr} | Tienda: ${access.storeId}`,
+        style: 'subheader',
+        alignment: 'center',
+        margin: [0, 0, 0, 10],
+      },
+      // Entradas
+      {
+        text: 'Entradas',
+        style: 'sectionHeader',
+        margin: [0, 10, 0, 5],
+      },
+      buildCajaEntradasTable(cashDay, shiftReportsData),
+      { text: '', margin: [0, 10, 0, 0] },
+      // Salidas
+      {
+        text: 'Salidas',
+        style: 'sectionHeader',
+        margin: [0, 10, 0, 5],
+      },
+      buildCajaSalidasTable(cashDay),
+      { text: '', margin: [0, 10, 0, 0] },
+      // Totales
+      {
+        text: 'Resumen',
+        style: 'sectionHeader',
+        margin: [0, 10, 0, 5],
+      },
+      buildCajaTotalesTable(cashDay, shiftReportsData),
+    ],
+    styles: {
+      header: { fontSize: 16, bold: true, color: '#111111' },
+      subheader: { fontSize: 11, color: '#666666' },
+      sectionHeader: { fontSize: 12, bold: true, color: '#333333' },
+      tableHeader: { bold: true, fontSize: 9, fillColor: '#f0f0f0', color: '#111111' },
+      tableCell: { fontSize: 9, color: '#111111' },
+    },
+    defaultStyle: { font: 'Helvetica' },
+  };
+
+  const pdfDoc = pdfMake.createPdf(docDefinition);
+  const pdfBuffer: Uint8Array = await pdfDoc.getBuffer().then((buffer: Buffer) => new Uint8Array(buffer));
+
+  return new Response(pdfBuffer as unknown as BodyInit, {
+    headers: {
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="caja-diaria-${fechaStr}.pdf"`,
+    },
+  });
+});
+
+// Helper: build caja entradas table
+function buildCajaEntradasTable(cashDay: any, shiftReportsData: any[]): any {
+  const prevOpening = cashDay?.openingCents ?? 0;
+
+  const turnoManana = shiftReportsData.find((t) => t.shift === 'morning');
+  const turnoTarde = shiftReportsData.find((t) => t.shift === 'evening');
+  const turnoNoche = shiftReportsData.find((t) => t.shift === 'night');
+
+  const totalTurnos =
+    (turnoManana?.totalSalesCents ?? 0) +
+    (turnoTarde?.totalSalesCents ?? 0) +
+    (turnoNoche?.totalSalesCents ?? 0);
+
+  const rows: any[][] = [
+    [
+      { text: 'Concepto', style: 'tableHeader' },
+      { text: 'Importe ($)', style: 'tableHeader' },
+    ],
+  ];
+
+  rows.push([{ text: 'SALDO DÍA ANTERIOR', style: 'tableCell' }, { text: formatArsPdf(prevOpening), style: 'tableCell' }]);
+  rows.push([{ text: 'TURNO MAÑANA', style: 'tableCell' }, { text: formatArsPdf(turnoManana?.totalSalesCents ?? 0), style: 'tableCell' }]);
+  rows.push([{ text: 'TURNO TARDE', style: 'tableCell' }, { text: formatArsPdf(turnoTarde?.totalSalesCents ?? 0), style: 'tableCell' }]);
+  rows.push([{ text: 'TURNO NOCHE', style: 'tableCell' }, { text: formatArsPdf(turnoNoche?.totalSalesCents ?? 0), style: 'tableCell' }]);
+  rows.push([
+    { text: 'TOTAL TURNOS', style: boldTableCellStyle },
+    { text: formatArsPdf((turnoManana?.totalSalesCents ?? 0) + (turnoTarde?.totalSalesCents ?? 0) + (turnoNoche?.totalSalesCents ?? 0)), style: boldTableCellStyle },
+  ]);
+
+  return {
+    layout: 'lightHorizontalLines',
+    table: {
+      headerRows: 1,
+      widths: ['*', 'auto'],
+      body: rows,
+    },
+  };
+}
+
+function buildCajaSalidasTable(cashDay: any): any {
+  // For now, show placeholder - would need cashLines data
+  const rows: any[][] = [
+    [
+      { text: 'Concepto', style: 'tableHeader' },
+      { text: 'Importe ($)', style: 'tableHeader' },
+    ],
+  ];
+
+  rows.push([{ text: 'Sin salidas registradas', style: 'tableCell', colSpan: 2 }, {}]);
+
+  return {
+    layout: 'lightHorizontalLines',
+    table: {
+      headerRows: 1,
+      widths: ['*', 'auto'],
+      body: rows,
+    },
+  };
+}
+
+function buildCajaTotalesTable(cashDay: any, shiftReportsData: any[]): any {
+  const prevOpening = cashDay?.openingCents ?? 0;
+
+  const turnoManana = shiftReportsData.find((t) => t.shift === 'morning');
+  const turnoTarde = shiftReportsData.find((t) => t.shift === 'evening');
+  const turnoNoche = shiftReportsData.find((t) => t.shift === 'night');
+
+  const totalTurnos =
+    (turnoManana?.totalSalesCents ?? 0) +
+    (turnoTarde?.totalSalesCents ?? 0) +
+    (turnoNoche?.totalSalesCents ?? 0);
+
+  const closingDeclared = cashDay?.closingDeclaredCents ?? 0;
+  const closingCounted = cashDay?.closingCountedCents ?? 0;
+  const difference = cashDay?.differenceCents ?? 0;
+
+  const totalEntradas = prevOpening + totalTurnos;
+  const totalSalidas = 0; // placeholder
+  const saldoFinal = totalEntradas - totalSalidas;
+
+  const rows: any[][] = [
+    [
+      { text: 'Concepto', style: 'tableHeader' },
+      { text: 'Importe ($)', style: 'tableHeader' },
+    ],
+  ];
+
+  rows.push([{ text: 'TOTAL ENTRADAS', style: boldTableCellStyle }, { text: formatArsPdf(totalEntradas), style: boldTableCellStyle }]);
+  rows.push([{ text: 'TOTAL SALIDAS', style: boldTableCellStyle }, { text: formatArsPdf(totalSalidas), style: boldTableCellStyle }]);
+  rows.push([{ text: 'SALDO FINAL CALCULADO', style: boldTableCellStyle }, { text: formatArsPdf(saldoFinal), style: boldTableCellStyle }]);
+  rows.push([{ text: 'CIERRE DECLARADO', style: baseTableCellStyle }, { text: formatArsPdf(closingDeclared), style: baseTableCellStyle }]);
+  rows.push([{ text: 'CIERRE CONTADO', style: baseTableCellStyle }, { text: formatArsPdf(closingCounted), style: baseTableCellStyle }]);
+  rows.push([{ text: 'DIFERENCIA', style: boldTableCellStyle }, { text: formatArsPdf(difference), style: boldTableCellStyle }]);
+
+  return {
+    layout: 'lightHorizontalLines',
+    table: {
+      headerRows: 1,
+      widths: ['*', 'auto'],
+      body: rows,
+    },
+  };
+}
+
 type ReadingInput = {
-  surtidor: number;
+  manguera: number;
   product: Fuel;
   opening: number;
   closing: number;
-  priceCents: number;
 };
 
-const READING_ROWS = 3;
+const READING_ROWS = 6;
 
 function parseReadings(
   body: Record<string, unknown>,
@@ -2214,13 +2739,12 @@ function parseReadings(
     const prod = str(body[`r${i}_producto`]);
     const ini = str(body[`r${i}_apertura`]);
     const fin = str(body[`r${i}_cierre`]);
-    const precio = str(body[`r${i}_precio`]);
-    if (!sur && !prod && !ini && !fin && !precio) continue;
+    if (!sur && !prod && !ini && !fin) continue;
     any = true;
     const label = `En la fila ${i + 1}`;
     const s = Number(sur);
-    if (!Number.isInteger(s) || s < 1 || s > 3) {
-      return `${label}: la manguera debe ser 1, 2 o 3.`;
+    if (!Number.isInteger(s) || s < 1 || s > 6) {
+      return `${label}: la manguera debe ser entre 1 y 6.`;
     }
     if (!isFuel(prod)) {
       return `${label}: elegí un producto válido.`;
@@ -2236,20 +2760,15 @@ function parseReadings(
     if (closing < opening) {
       return `${label}: la lectura final no puede ser menor que la inicial.`;
     }
-    const price = centsFrom(precio);
-    if (price === null) {
-      return `${label}: ingresá el precio por litro (monto válido en pesos).`;
-    }
     if (seen.has(s)) {
       return `${label}: repetís la manguera ${s}.`;
     }
     seen.add(s);
     out.push({
-      surtidor: s,
+      manguera: s,
       product: prod,
       opening,
       closing,
-      priceCents: price,
     });
   }
   if (!any) return 'Cargá al menos una lectura de manguera.';
@@ -2259,7 +2778,7 @@ function parseReadings(
 function readingsFormHtml(): string {
   const mangueraOpts =
     `<option value="">—</option>` +
-    [1, 2, 3].map((n) => `<option value="${n}">${n}</option>`).join('');
+    [1, 2, 3, 4, 5, 6].map((n) => `<option value="${n}">${n}</option>`).join('');
   const fuelOpts = `<option value="">—</option>` + fuelOptions();
   let out = '';
   for (let i = 0; i < READING_ROWS; i++) {
@@ -2649,14 +3168,15 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
   }
   
   // Ventas por rubro: el importe se calcula SIEMPRE en el servidor
+  // Precio único por turno (GNC) - viene de body.gnc_price (form field name)
   const gncQty = qtyFrom(body.gnc_qty);
-  const gncPriceCents = centsOr0(body.gnc_price);
+  const priceCents = centsOr0(body.gnc_price);
   const lubricantesSalesCents = centsOr0(body.lubricantes_sales);
   const variosQty = qtyFrom(body.varios_qty);
   const variosPriceCents = centsOr0(body.varios_price);
   if (
     gncQty === null ||
-    gncPriceCents === null ||
+    priceCents === null ||
     lubricantesSalesCents === null ||
     variosQty === null ||
     variosPriceCents === null
@@ -2668,7 +3188,7 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
       '/operativa/rendicion/nuevo',
     );
   }
-  const gncSalesCents = Math.round(gncQty * gncPriceCents);
+  const gncSalesCents = Math.round(gncQty * priceCents);
   const variosSalesCents = Math.round(variosQty * variosPriceCents);
   const totalSalesCents = gncSalesCents + lubricantesSalesCents + variosSalesCents;
   
@@ -2698,11 +3218,10 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
       shiftEnd: fin,
       cashierId: user.id,
       gncQty,
-      gncPriceCents,
+      priceCents,
       gncSalesCents,
       lubricantesSalesCents,
       variosQty,
-      variosPriceCents,
       variosSalesCents,
       totalSalesCents,
       sobre1Hora,
@@ -2728,13 +3247,12 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
   await db.insert(shiftReportReadings).values(
     readings.map((r) => ({
       reportId,
-      surtidor: r.surtidor,
+      manguera: r.manguera,
       product: r.product,
       openingReading: r.opening,
       closingReading: r.closing,
       volume: r.closing - r.opening,
-      priceCents: r.priceCents,
-      totalCents: Math.round((r.closing - r.opening) * r.priceCents),
+      totalCents: Math.round((r.closing - r.opening) * 0), // price is in shiftReports.priceCents
     })),
   );
   return c.redirect(`/operativa/rendicion/${reportId}?aviso=1`);
@@ -2761,26 +3279,25 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
     .select()
     .from(shiftReportReadings)
     .where(eq(shiftReportReadings.reportId, report.id))
-    .orderBy(
-      asc(shiftReportReadings.surtidor),
-    );
+    .orderBy(asc(shiftReportReadings.manguera));
   const totals = await db
     .select({
       total: sql<number>`coalesce(sum(${shiftReportReadings.totalCents}), 0)`,
       volume: sql<number>`coalesce(sum(${shiftReportReadings.volume}), 0)`,
     })
     .from(shiftReportReadings)
-    .where(eq(shiftReportReadings.reportId, report.id));
+    .where(eq(shiftReportReadings.reportId, report.id))
+    .orderBy(asc(shiftReportReadings.manguera));
 
   const bodyRows = readings
     .map(
       (r) => `<tr>
-        <td style="${TD}">${r.surtidor}</td>
+        <td style="${TD}">${r.manguera}</td>
         <td style="${TD}">${FUEL_LABELS[r.product]}</td>
         <td style="${TD}">${r.openingReading}</td>
         <td style="${TD}">${r.closingReading}</td>
         <td style="${TD}"><strong>${r.volume}</strong></td>
-        <td style="${TD}">${formatArs(r.priceCents)}</td>
+        <td style="${TD}">${formatArs(report.priceCents)}</td>
         <td style="${TD}">${formatArs(r.totalCents)}</td>
       </tr>`,
     )
@@ -2852,7 +3369,7 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
           <th style="${TH}">Importe</th>
         </tr></thead>
         <tbody>
-          ${rubroRow('GNC', report.gncQty, report.gncPriceCents, report.gncSalesCents, 'm³')}
+          ${rubroRow('GNC', report.gncQty, report.priceCents, report.gncSalesCents, 'm³')}
           <tr>
             <td style="${TD}">Lubricantes</td>
             <td style="${TD_NUM}">—</td>

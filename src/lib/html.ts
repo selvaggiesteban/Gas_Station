@@ -318,7 +318,6 @@ function sidebarLinks(user: { name: string; points: number; role: string }): str
         { href: '/admin/usuarios', label: 'Usuarios' },
         { href: '/admin/tienda', label: 'Tienda' },
         { href: '/admin/desafios', label: 'Desafíos' },
-        { href: '/admin/ordenes', label: 'Órdenes' },
         { href: '/operativa', label: 'Operativa' },
         { href: '/operativa/resumen-diario', label: 'Resumen diario' },
         { href: '/ranking', label: 'Ranking' },

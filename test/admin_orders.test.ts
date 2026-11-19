@@ -522,7 +522,12 @@ describe('admin órdenes', () => {
 
     const formulario = await get('/admin/ordenes/nueva', esc.gestorCookie);
     expect(formulario.status).toBe(200);
-    expect(await formulario.text()).toContain('Nueva orden');
+    const htmlForm = await formulario.text();
+    expect(htmlForm).toContain('Nueva orden');
+    // Los inputs de cantidad están fuera del <form> en el DOM: se asocian con
+    // el atributo HTML5 form= para que el submit los incluya.
+    expect(htmlForm).toContain('id="orden-nueva-form"');
+    expect(htmlForm).toContain('form="orden-nueva-form"');
 
     const stockAntes = await productStock(esc.productId);
     const creada = await post(

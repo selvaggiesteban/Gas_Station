@@ -111,7 +111,7 @@ main.landing { max-width: 72rem; }
   .sidebar { transform: translateX(-100%); }
   .sidebar.open { transform: translateX(0); }
 }
-.sidebar .sid-brand { padding: 0.75rem 1rem; font-weight: 800; font-size: 1.05rem;
+.sidebar .sid-brand { padding: 0; font-weight: 800; font-size: 1.05rem;
   color: var(--fg); border-bottom: 1px solid var(--sidebar-border); margin-bottom: 0.5rem; }
 .sidebar a.sid-brand:hover { background: transparent; }
 .sidebar .sid-user { padding: 0.75rem 1rem; font-size: 0.8rem; color: var(--muted);
@@ -229,7 +229,7 @@ export function page(opts: PageOptions, body: string): string {
       `<div class="sidebar-overlay" id="sidebarOverlay"></div>
       <button class="hamburger" id="hamburger" aria-label="Menú" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg></button>
       <aside class="sidebar" id="sidebar">
-        <a class="sid-brand" href="/"><img src="${LOGO_IMG}" alt="${esc(brand)}" style="width:36px;height:36px;flex-shrink:0;display:block"><span style="margin-left:0.25rem;font-size:0.9rem">${esc(brand)}</span></a>
+        <a class="sid-brand" href="/"><img src="${LOGO_IMG}" alt="${esc(brand)}" style="width:100%;height:auto;display:block"></a>
         <div class="sid-user">${esc(opts.user.name)} · ${esc(opts.user.role)}</div>
         ${sidebarLinks(opts.user)}
         <div class="sep"></div>
@@ -318,7 +318,7 @@ function sidebarLinks(user: { name: string; points: number; role: string }): str
         { href: '/admin/usuarios', label: 'Usuarios' },
         { href: '/admin/tienda', label: 'Tienda' },
         { href: '/admin/desafios', label: 'Desafíos' },
-        { href: '/operativa', label: 'Operativa' },
+        { href: '/operativa/caja', label: 'Caja diaria' },
         { href: '/operativa/resumen-diario', label: 'Resumen diario' },
         { href: '/ranking', label: 'Ranking' },
       ]

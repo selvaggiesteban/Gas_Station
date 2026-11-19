@@ -574,7 +574,7 @@ describe('operativa', () => {
       ).bind('Producto Test', slug, 1000, 'general').run();
       pid = ins.meta.last_row_id;
     }
-    const postBody = { ['qty_' + pid]: '1', cupon: '', comprobante: '' };
+    const postBody = { ['qty_' + pid]: '1', cupon: '', comprobante: '', metodo: 'transferencia' };
     const checkout = await post('/checkout', postBody, cookie);
     expect(checkout.status).toBe(302);
     expect(await count('raffle_coupons')).toBe(antes + 1);

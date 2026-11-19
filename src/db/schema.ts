@@ -35,6 +35,7 @@ export const ORDER_STATUS_VALUES = [
 ] as const;
 
 export const PAYMENT_METHOD_VALUES = [
+  'efectivo',
   'transferencia',
   'mercadopago',
 ] as const;
@@ -265,7 +266,7 @@ export const orders = sqliteTable(
     ),
     paymentChk: check(
       'orders_payment_chk',
-      sql`payment_method in ('transferencia','mercadopago')`,
+      sql`payment_method in ('efectivo','transferencia','mercadopago')`,
     ),
     totalsChk: check(
       'orders_totals_chk',

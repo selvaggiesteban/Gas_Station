@@ -228,13 +228,17 @@ export const adminRoutes = new Hono<AppEnv>();
 // Apply audit logging to all admin routes (after auth middleware)
 adminRoutes.use('/admin/*', auditLog());
 
-// El playero (store_manager) solo entra a las rutas de órdenes:
-// listado, detalle, comprobante y nueva orden. Aprobar/rechazar es solo admin.
+// El playero (store_manager) entra a las rutas de órdenes (listado, detalle,
+// comprobante, nueva orden y aprobación/rechazo) y al alta de clientes desde
+// playa. Todo lo demás de /admin sigue siendo solo admin.
 const PLAYERO_ADMIN_PATHS = [
   /^\/admin\/ordenes$/,
   /^\/admin\/ordenes\/nueva$/,
   /^\/admin\/ordenes\/\d+$/,
+  /^\/admin\/ordenes\/\d+\/aprobar$/,
+  /^\/admin\/ordenes\/\d+\/rechazar$/,
   /^\/admin\/comprobantes\/\d+$/,
+  /^\/admin\/clientes\/nuevo$/,
 ];
 
 adminRoutes.use('/admin', requireRole('admin'));
@@ -1330,7 +1334,7 @@ function ordenAvisoDe(c: Context<AppEnv>): string | undefined {
     return 'Orden aprobada. Si correspondía, se acreditaron los puntos.';
   }
   if (v === 'rechazada') return 'Orden rechazada y stock devuelto.';
-  if (v === 'nueva') return 'Orden creada como pendiente. El admin la aprueba.';
+  if (v === 'nueva') return 'Orden creada como pendiente. El gestor la aprueba.';
   if (v === 'ok') return 'Cambios guardados.';
   return undefined;
 }
@@ -1537,7 +1541,7 @@ adminRoutes.get('/admin/ordenes/nueva', async (c) => {
       { title: 'Nueva orden', brand: brandOf(c), user: c.get('user') },
       `<div class="card">
         <h1>Nueva orden</h1>
-        <p class="muted">Cargá una orden a mano. Queda <strong>pendiente</strong> y el admin la aprueba.</p>
+        <p class="muted">Cargá una orden a mano. Queda <strong>pendiente</strong> y el gestor la aprueba.</p>
         <form method="post" action="/admin/ordenes/nueva">
           <label for="userId">Cliente</label>
           <select id="userId" name="userId" required>
@@ -1546,6 +1550,7 @@ adminRoutes.get('/admin/ordenes/nueva', async (c) => {
           </select>
           <label for="pago">Método de pago</label>
           <select id="pago" name="pago" required>
+            <option value="efectivo">Efectivo</option>
             <option value="transferencia">Transferencia bancaria</option>
             <option value="mercadopago">Mercado Pago</option>
           </select>
@@ -1586,7 +1591,7 @@ adminRoutes.post('/admin/ordenes/nueva', async (c) => {
       { error: 'Elegí un cliente.' },
     );
   }
-  if (pago !== 'transferencia' && pago !== 'mercadopago') {
+  if (pago !== 'efectivo' && pago !== 'transferencia' && pago !== 'mercadopago') {
     return render(
       c,
       'Nueva orden',
@@ -1751,9 +1756,10 @@ adminRoutes.get('/admin/ordenes/:id', async (c) => {
        <img src="/admin/comprobantes/${order.id}" alt="Comprobante" style="max-width:100%;border-radius:0.5rem;border:1px solid #e4e4e7;margin-top:0.5rem">`
     : '<p class="muted">Sin comprobante adjunto.</p>';
 
-  const isAdmin = c.get('user')?.role === 'admin';
+  const role = c.get('user')?.role;
+  const puedeAprobar = role === 'admin' || role === 'store_manager';
   const acciones =
-    isAdmin && order.status === 'pending'
+    puedeAprobar && order.status === 'pending'
       ? `<div class="row" style="margin-top:1rem">
           <form method="post" action="/admin/ordenes/${order.id}/aprobar" style="display:inline;margin-top:0">
             <button type="submit" style="${SMALL_BTN}">Aprobá el pago</button>
@@ -1765,7 +1771,7 @@ adminRoutes.get('/admin/ordenes/:id', async (c) => {
           </form>
         </div>`
       : order.status === 'pending'
-        ? '<p class="muted" style="margin-top:1rem">Pendiente de aprobación por el admin.</p>'
+        ? '<p class="muted" style="margin-top:1rem">Pendiente de aprobación por el gestor.</p>'
         : '';
 
   const historial = [
@@ -1793,7 +1799,7 @@ adminRoutes.get('/admin/ordenes/:id', async (c) => {
         <div class="row">
           <span class="pill">${ORDER_STATUS_LABELS[order.status] ?? order.status}</span>
           <span class="muted">Creada: ${fmtFecha(order.createdAt)}</span>
-          <span class="muted">Pago: ${order.paymentMethod === 'transferencia' ? 'Transferencia bancaria' : 'Mercado Pago'}</span>
+          <span class="muted">Pago: ${{ efectivo: 'Efectivo', transferencia: 'Transferencia bancaria', mercadopago: 'Mercado Pago' }[order.paymentMethod] ?? order.paymentMethod}</span>
         </div>
         <p class="muted">Cliente: ${cliente ? `${escapeHtml(cliente.name)} · ${escapeHtml(cliente.email)}` : `#${order.userId}`} · Tienda: ${store ? escapeHtml(store.name) : `#${order.storeId}`}${gestor ? ` · Playero: ${escapeHtml(gestor.name)}` : ''}</p>
         ${acciones}

@@ -88,10 +88,11 @@ async function addToCart(
 }
 
 function checkoutForm(
-  opts: { cupon?: string; comprobante?: boolean } = {},
+  opts: { cupon?: string; comprobante?: boolean; metodo?: string } = {},
 ): FormData {
   const fd = new FormData();
   fd.append('cupon', opts.cupon ?? '');
+  fd.append('metodo', opts.metodo ?? 'transferencia');
   if (opts.comprobante) {
     const blob = new Blob([new Uint8Array([1, 2, 3, 4])], {
       type: 'application/pdf',
@@ -308,6 +309,7 @@ describe('shop', () => {
     const email = `invitado.${Date.now()}@test.com`;
     const fd = new FormData();
     fd.append('cupon', '');
+    fd.append('metodo', 'transferencia');
     fd.append('nombre', 'Fede Invitado');
     fd.append('email', email);
     fd.append('password', 'supersecret1');
@@ -368,6 +370,7 @@ describe('shop', () => {
 
     const fd = new FormData();
     fd.append('cupon', '');
+    fd.append('metodo', 'transferencia');
     fd.append('nombre', 'Otro Invitado');
     fd.append('email', 'zoya.existente@test.com');
     fd.append('password', 'supersecret1');
@@ -381,5 +384,89 @@ describe('shop', () => {
     ).first<{ n: number }>();
     expect(after!.n).toBe(before!.n);
     expect(cookieNamed(res, 'gs_session')).toBeNull();
+  });
+
+  describe('métodos de pago', () => {
+    it('GET /checkout muestra los tres botones y Mercado Pago ya no está deshabilitado', async () => {
+      const cookie = await register('Fabian Metodos', 'fabian.metodos@test.com');
+      const productId = await insertProduct({
+        name: 'Aceite Mineral',
+        slug: 'aceite-mineral-mp',
+        priceCents: 50000,
+        stock: 5,
+      });
+      const withCart = await addToCart(cookie, productId, 1);
+
+      const res = await get('/checkout', withCart);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain('name="metodo" value="efectivo"');
+      expect(html).toContain('name="metodo" value="transferencia"');
+      expect(html).toContain('name="metodo" value="mercadopago"');
+      expect(html).toContain('Confirmá en efectivo');
+      expect(html).toContain('Confirmá por transferencia');
+      expect(html).toContain('Confirmá con Mercado Pago');
+      expect(html).not.toContain('próximamente');
+    });
+
+    it('POST /checkout con metodo=efectivo crea la orden en efectivo', async () => {
+      const cookie = await register('Gaston Efectivo', 'gaston.efectivo@test.com');
+      const productId = await insertProduct({
+        name: 'Pastillas de Freno',
+        slug: 'pastillas-freno-efectivo',
+        priceCents: 75000,
+        stock: 4,
+      });
+      const withCart = await addToCart(cookie, productId, 1);
+
+      const res = await checkout(withCart, checkoutForm({ metodo: 'efectivo' }));
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe('/ordenes?aviso=comprobante');
+
+      const order = await env.DB.prepare(
+        'select payment_method, status from orders order by id desc limit 1',
+      ).first<{ payment_method: string; status: string }>();
+      expect(order).toBeTruthy();
+      expect(order!.payment_method).toBe('efectivo');
+      expect(order!.status).toBe('pending');
+    });
+
+    it('POST /checkout sin metodo o con metodo inválido responde el error y no crea la orden', async () => {
+      const cookie = await register('Hugo Invalido', 'hugo.invalido@test.com');
+      const productId = await insertProduct({
+        name: 'Filtro de Aire',
+        slug: 'filtro-aire-invalido',
+        priceCents: 30000,
+        stock: 5,
+      });
+      const withCart = await addToCart(cookie, productId, 1);
+
+      const before = await env.DB.prepare(
+        'select count(*) as n from orders',
+      ).first<{ n: number }>();
+
+      const sinMetodo = new FormData();
+      sinMetodo.append('cupon', '');
+      const resSin = await checkout(withCart, sinMetodo);
+      expect(resSin.status).toBe(422);
+      expect(await resSin.text()).toContain('Elegí un método de pago.');
+
+      const cripto = new FormData();
+      cripto.append('cupon', '');
+      cripto.append('metodo', 'cripto');
+      const resInvalido = await checkout(withCart, cripto);
+      expect(resInvalido.status).toBe(422);
+      expect(await resInvalido.text()).toContain('Elegí un método de pago.');
+
+      const after = await env.DB.prepare(
+        'select count(*) as n from orders',
+      ).first<{ n: number }>();
+      expect(after!.n).toBe(before!.n);
+
+      const stock = await env.DB.prepare('select stock from products where id = ?')
+        .bind(productId)
+        .first<{ stock: number }>();
+      expect(stock!.stock).toBe(5);
+    });
   });
 });

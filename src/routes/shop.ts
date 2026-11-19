@@ -52,8 +52,20 @@ const STATUS_LABELS: Record<string, string> = {
   refunded: 'Reembolsado',
 };
 
+const PAYMENT_LABELS: Record<string, string> = {
+  efectivo: 'Efectivo',
+  transferencia: 'Transferencia bancaria',
+  mercadopago: 'Mercado Pago',
+};
+
 function str(v: unknown): string {
   return typeof v === 'string' ? v.trim() : '';
+}
+
+type MetodoPago = 'efectivo' | 'transferencia' | 'mercadopago';
+
+function isMetodoPago(v: string): v is MetodoPago {
+  return v === 'efectivo' || v === 'transferencia' || v === 'mercadopago';
 }
 
 function productIdFrom(v: unknown): number | null {
@@ -146,7 +158,7 @@ shopRoutes.get('/tienda', async (c) => {
       { title: 'Tienda', brand: brandOf(c), user },
       `<div class="card">
         <h1>Tienda</h1>
-        <p class="muted">Precios en pesos. Agregá productos y finalizá la compra con transferencia.</p>
+        <p class="muted">Precios en pesos. Agregá productos y finalizá la compra como quieras.</p>
         <p><a href="/carrito">Ver carrito${escapeHtml(cartLink(cart))}</a></p>
       </div>
       ${cards || '<div class="card"><p class="muted">No hay productos disponibles por el momento.</p></div>'}`,
@@ -352,11 +364,14 @@ function checkoutPage(
           ${cuenta}
           <label for="cupon">Cupón (opcional)</label>
           <input id="cupon" name="cupon" type="text" placeholder="CÓDIGO">
-          <label for="comprobante">Comprobante de transferencia (imagen o PDF, máx. 5&nbsp;MB — opcional)</label>
+          <label for="comprobante">Comprobante de pago (imagen o PDF, máx. 5&nbsp;MB — opcional)</label>
           <input id="comprobante" name="comprobante" type="file" accept="image/*,application/pdf">
           ${turnstileHtml}
-          <button type="submit" name="metodo" value="transferencia">Confirmá por transferencia</button>
-          <button type="button" class="secondary" disabled style="opacity:0.6;cursor:not-allowed">Pagar con Mercado Pago (próximamente)</button>
+          <div class="row">
+            <button type="submit" name="metodo" value="efectivo">Confirmá en efectivo</button>
+            <button type="submit" name="metodo" value="transferencia">Confirmá por transferencia</button>
+            <button type="submit" name="metodo" value="mercadopago">Confirmá con Mercado Pago</button>
+          </div>
         </form>
         <p class="muted">Transferís el total a la cuenta indicada y adjuntás el comprobante. Vamos a revisar el pago y a confirmar tu pedido.</p>
       </div>`,
@@ -390,6 +405,10 @@ shopRoutes.post('/checkout', async (c) => {
   if (sErr) return fail(sErr);
 
   const body = await c.req.parseBody();
+  const metodo = str(body.metodo);
+  if (!isMetodoPago(metodo)) {
+    return fail('Elegí un método de pago.');
+  }
 
   // Verify Turnstile if configured
   if (c.env.TURNSTILE_SECRET_KEY) {
@@ -505,6 +524,7 @@ shopRoutes.post('/checkout', async (c) => {
       discountCents,
       totalCents,
       couponId,
+      paymentMethod: metodo,
     });
     await insertOrderItems(db, order.id, lines);
   } catch (err) {
@@ -619,7 +639,7 @@ shopRoutes.get('/ordenes/:id', requireAuth(), async (c) => {
         <h1>Orden ${escapeHtml(order.number)}</h1>
         <div class="row">
           <span class="pill">${escapeHtml(STATUS_LABELS[order.status] ?? order.status)}</span>
-          <span class="muted">Pago: ${order.paymentMethod === 'transferencia' ? 'Transferencia bancaria' : 'Mercado Pago'}</span>
+          <span class="muted">Pago: ${PAYMENT_LABELS[order.paymentMethod] ?? order.paymentMethod}</span>
         </div>
         <h2>Productos</h2>
         ${itemsHtml}

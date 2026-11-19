@@ -327,6 +327,7 @@ function sidebarLinks(user: { name: string; points: number; role: string }): str
           { href: '/app', label: 'Inicio' },
           { href: '/operativa', label: 'Operativa' },
           { href: '/admin/ordenes', label: 'Órdenes' },
+          { href: '/admin/clientes/nuevo', label: 'Nuevo cliente' },
           { href: '/ranking', label: 'Ranking' },
         ]
       : [];

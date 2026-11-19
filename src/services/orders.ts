@@ -178,7 +178,7 @@ export type NewOrderValues = {
   discountCents: number;
   totalCents: number;
   couponId: number | null;
-  paymentMethod?: 'transferencia' | 'mercadopago';
+  paymentMethod?: 'efectivo' | 'transferencia' | 'mercadopago';
   notes?: string | null;
 };
 

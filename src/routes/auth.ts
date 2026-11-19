@@ -141,13 +141,13 @@ authRoutes.post('/login', loginRateLimit, async (c) => {
   const password = str(body.password);
   const turnstileToken = str(body['cf-turnstile-response']);
 
-  // Verify Turnstile if configured
-  if (c.env.TURNSTILE_SECRET_KEY) {
-    const validTurnstile = await verifyTurnstile(c, turnstileToken, 'login');
-    if (!validTurnstile) {
-      return loginForm(c, { error: 'Verificación de seguridad fallida. Intenta de nuevo.' });
-    }
-  }
+  // Verify Turnstile if configured — TEMPORARILY DISABLED (Cloudflare degraded)
+  // if (c.env.TURNSTILE_SECRET_KEY) {
+  //   const validTurnstile = await verifyTurnstile(c, turnstileToken, 'login');
+  //   if (!validTurnstile) {
+  //     return loginForm(c, { error: 'Verificación de seguridad fallida. Intenta de nuevo.' });
+  //   }
+  // }
 
   if (!email || !password) {
     return loginForm(c, { error: 'Completá el email y la contraseña.' });
@@ -190,13 +190,13 @@ authRoutes.post('/registro', registerRateLimit, async (c) => {
   const password2 = str(body.password2);
   const turnstileToken = str(body['cf-turnstile-response']);
 
-  // Verify Turnstile if configured
-  if (c.env.TURNSTILE_SECRET_KEY) {
-    const validTurnstile = await verifyTurnstile(c, turnstileToken, 'register');
-    if (!validTurnstile) {
-      return registerForm(c, { error: 'Verificación de seguridad fallida. Intenta de nuevo.' });
-    }
-  }
+  // Verify Turnstile if configured — TEMPORARILY DISABLED (Cloudflare degraded)
+  // if (c.env.TURNSTILE_SECRET_KEY) {
+  //   const validTurnstile = await verifyTurnstile(c, turnstileToken, 'register');
+  //   if (!validTurnstile) {
+  //     return registerForm(c, { error: 'Verificación de seguridad fallida. Intenta de nuevo.' });
+  //   }
+  // }
 
   if (nombre.length < 2) {
     return registerForm(c, { error: 'Ingresá tu nombre (mínimo 2 letras).' });

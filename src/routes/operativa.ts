@@ -445,19 +445,19 @@ operativaRoutes.get('/operativa', async (c) => {
     isAdmin
       ? [
           indexCard(
-            'Caja diaria',
-            'Apertura y cierre de caja por día y tienda.',
-            '/operativa/caja',
-            cash[0]
-              ? `${fmtDay(cash[0].reportDate)} · ${cash[0].status === 'open' ? 'Abierta' : 'Cerrada'} · Apertura ${formatArs(cash[0].openingCents)}${cash[0].differenceCents !== null ? ` · Diferencia ${formatArs(cash[0].differenceCents)}` : ''}`
-              : NO_DATA,
-          ),
-          indexCard(
             'Resumen diario',
             'Matriz de GNC, facturación y recaudación del día.',
             '/operativa/resumen-diario',
             daily[0]
               ? `${fmtDay(daily[0].reportDate)} · Turno ${SHIFT_LABELS[daily[0].shift] ?? daily[0].shift} · GNC ${daily[0].gncVolume} m³`
+              : NO_DATA,
+          ),
+          indexCard(
+            'Caja diaria',
+            'Apertura y cierre de caja por día y tienda.',
+            '/operativa/caja',
+            cash[0]
+              ? `${fmtDay(cash[0].reportDate)} · ${cash[0].status === 'open' ? 'Abierta' : 'Cerrada'} · Apertura ${formatArs(cash[0].openingCents)}${cash[0].differenceCents !== null ? ` · Diferencia ${formatArs(cash[0].differenceCents)}` : ''}`
               : NO_DATA,
           ),
         ]
@@ -469,7 +469,7 @@ operativaRoutes.get('/operativa', async (c) => {
     'Operativa',
     `<div class="card">
       <h1>Operativa diaria</h1>
-      <p class="muted">${isAdmin ? 'Caja y resumen diario del día.' : 'Cargá la rendición de tu turno.'} Tienda activa: <strong>${escapeHtml(storeName)}</strong>.</p>
+      <p class="muted">${isAdmin ? 'Resumen diario y caja del día.' : 'Cargá la rendición de tu turno.'} Tienda activa: <strong>${escapeHtml(storeName)}</strong>.</p>
       <a class="btn secondary" href="/app">Volver al inicio</a>
     </div>
     ${cards}`,

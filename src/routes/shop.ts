@@ -54,7 +54,6 @@ const STATUS_LABELS: Record<string, string> = {
 
 const PAYMENT_LABELS: Record<string, string> = {
   efectivo: 'Efectivo',
-  transferencia: 'Transferencia bancaria',
   mercadopago: 'Mercado Pago',
 };
 
@@ -62,10 +61,10 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v.trim() : '';
 }
 
-type MetodoPago = 'efectivo' | 'transferencia' | 'mercadopago';
+type MetodoPago = 'efectivo' | 'mercadopago';
 
 function isMetodoPago(v: string): v is MetodoPago {
-  return v === 'efectivo' || v === 'transferencia' || v === 'mercadopago';
+  return v === 'efectivo' || v === 'mercadopago';
 }
 
 function productIdFrom(v: unknown): number | null {
@@ -369,11 +368,10 @@ function checkoutPage(
           ${turnstileHtml}
           <div class="row">
             <button type="submit" name="metodo" value="efectivo">Confirmá en efectivo</button>
-            <button type="submit" name="metodo" value="transferencia">Confirmá por transferencia</button>
             <button type="submit" name="metodo" value="mercadopago">Confirmá con Mercado Pago</button>
           </div>
         </form>
-        <p class="muted">Transferís el total a la cuenta indicada y adjuntás el comprobante. Vamos a revisar el pago y a confirmar tu pedido.</p>
+        <p class="muted">Pagás en efectivo o con Mercado Pago. Vamos a revisar el pago y a confirmar tu pedido.</p>
       </div>`,
     ) + swRegistrationScript(),
     opts.error ? 422 : 200,

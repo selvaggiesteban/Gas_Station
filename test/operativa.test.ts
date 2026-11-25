@@ -290,25 +290,25 @@ describe('operativa', () => {
     expect(html).toContain('TURNO TARDE');
     expect(html).toContain('TURNO NOCHE');
     expect(html).toContain('TOTAL TURNOS');
-    expect(html).toContain('BANCO (cuenta)');
-    expect(html).toContain('MONEDAS (cuenta)');
+    expect(html).toContain('BANCO (Mercado Pago)');
+    // MONEDAS ya no existe como categoría separada
     expect(html).toContain('ARCA (ref.)');
     expect(html).toContain('UNIFORMES');
 
-    // Fórmulas:
+    // Fórmulas NUEVAS:
     // prevOpening = 200
     // totalTurnos = 1000 + 2000 + 500 = 3500
-    // entradasManuales = 0 (Banco y Monedas son 'cuenta', no suman en Entradas)
-    // totalEntradas = 200 + 3500 + 0 = 3700
+    // totalBanco (MP auto) = 0 (no hay órdenes MP en este test)
+    // entradasManuales = 0
+    // totalEntradas = 200 + 3500 + 0 = 3700 (Banco NO suma a entradas)
     // salidasManuales = 200 (solo Uniformes, 'movimiento')
     // totalSalidas = 200 (ARCA es 'referencia', no suma)
     // totalDia = 3700 - 200 = 3500
-    // totalCuentas = 1500 + 50 = 1550
-    // totalNeto = 3500 - 1550 = 1950
+    // totalNeto = totalDia - totalBanco = 3500 - 0 = 3500
     expect(html).toContain('3.700,00'); // Total Entradas
     expect(html).toContain('200,00');   // Total Salidas
     expect(html).toContain('3.500,00'); // Total del día
-    expect(html).toContain('1.950,00'); // Total Neto
+    expect(html).toContain('3.500,00'); // Total Neto (efectivo)
 
     // 5. Reemplazo total (borra y vuelve a insertar)
     const reemplazo = await post(
@@ -470,12 +470,10 @@ describe('operativa', () => {
         notas: 'turno tarde',
         gnc_qty: '376',
         gnc_price: '1250',
-        r0_surtidor: '1',
-        r0_producto: 'nafta',
+        // 6 filas fijas: mangueras 1-6, todas GNC
+        // Solo enviamos lecturas para mangueras 1 y 2 (índices 0 y 1)
         r0_apertura: '1000.5',
         r0_cierre: '1250.5',
-        r1_surtidor: '3',
-        r1_producto: 'gasoil',
         r1_apertura: '500',
         r1_cierre: '625.5',
       },
@@ -517,13 +515,16 @@ describe('operativa', () => {
         total_cents: number;
       }>();
     expect(readings.results.length).toBe(2);
-    const nafta = readings.results[0]!;
-    expect(nafta.product).toBe('nafta');
-    expect(nafta.volume).toBe(250);
-    expect(nafta.total_cents).toBe(0); // precio está en shift_reports.price_cents
-    const gasoil = readings.results[1]!;
-    expect(gasoil.volume).toBeCloseTo(125.5, 5);
-    expect(gasoil.total_cents).toBe(0); // precio está en shift_reports.price_cents
+    const m1 = readings.results[0]!;
+    expect(m1.manguera).toBe(1);
+    expect(m1.product).toBe('gnc');
+    expect(m1.volume).toBe(250);
+    expect(m1.total_cents).toBe(0); // precio está en shift_reports.price_cents
+    const m2 = readings.results[1]!;
+    expect(m2.manguera).toBe(2);
+    expect(m2.product).toBe('gnc');
+    expect(m2.volume).toBeCloseTo(125.5, 5);
+    expect(m2.total_cents).toBe(0); // precio está en shift_reports.price_cents
 
     const detalle = await get(
       `/operativa/rendicion/${report!.id}`,
@@ -917,37 +918,16 @@ describe('operativa', () => {
     // Facturado playeros = GNC $17.700 + lub/varios $5.000 = $22.700
     expect(html).toContain(formatArs(2270000));
 
-    // Carga manual: servicios del turno mañana = $1.500,50
-    const guardado = await post(
-      '/operativa/resumen-diario/facturacion',
-      {
-        fecha,
-        servicios_morning: '1500.50',
-        mini_morning: '0',
-        servicios_evening: '0',
-        mini_evening: '0',
-        servicios_night: '0',
-        mini_night: '0',
-        servicios_adicional: '0',
-        mini_adicional: '0',
-      },
-      admin,
-    );
-    expect(guardado.status).toBe(302);
-
-    const fila = await env.DB.prepare(
-      'select manana_facturacion_servicios from daily_activity_summary where report_date = ?',
-    )
-      .bind(dia)
-      .first<{ manana_facturacion_servicios: number }>();
-    expect(fila?.manana_facturacion_servicios).toBe(150050);
-
+    // Verificar que ya no hay campos de facturación servicios/mini mercado
     const tras = await get(`/operativa/resumen-diario?fecha=${fecha}`, admin);
     expect(tras.status).toBe(200);
     const html2 = await tras.text();
-    expect(html2).toContain('value="1500.50"');
-    // Total recaudación mañana = facturado $22.700 + servicios $1.500,50 = $24.200,50
-    expect(html2).toContain(formatArs(2420050));
+    expect(html2).not.toContain('name="servicios_morning"');
+    expect(html2).not.toContain('name="mini_morning"');
+    expect(html2).not.toContain('Facturación servicios/materiales');
+    expect(html2).not.toContain('Facturación mini mercado');
+    // Total recaudación = facturado playeros (sin servicios ni mini mercado)
+    expect(html2).toContain('TOTAL RECAUDACIÓN');
   });
 
   it('ventas: la pantalla queda de solo lectura (sin carga ni edición inline)', async () => {

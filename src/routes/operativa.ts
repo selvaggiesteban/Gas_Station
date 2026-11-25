@@ -13,6 +13,7 @@ import {
   cashLines,
   dailyActivities,
   dailyActivitySummary,
+  orders,
   products,
   raffleCoupons,
   salesSummaries,
@@ -478,7 +479,7 @@ operativaRoutes.get('/operativa', async (c) => {
 const CAJA_MAX_FILAS = 60;
 
 type CajaSide = 'entrada' | 'salida';
-type CajaKind = 'movimiento' | 'cuenta' | 'referencia';
+type CajaKind = 'movimiento' | 'banco' | 'referencia';
 type CashRow = typeof cashDays.$inferSelect;
 type LineRow = typeof cashLines.$inferSelect;
 type SalesRow = typeof salesSummaries.$inferSelect;
@@ -506,7 +507,7 @@ function movimientoRow(
   amount: string,
   sort: number,
 ): string {
-  const kindLabel = kind === 'cuenta' ? ' (cuenta)' : kind === 'referencia' ? ' (ref.)' : '';
+  const kindLabel = kind === 'banco' ? ' (Banco MP)' : kind === 'referencia' ? ' (ref.)' : '';
   const kindHidden = `<input type="hidden" name="${side}_k" value="${kind}">`;
   const sortHidden = `<input type="hidden" name="${side}_s" value="${sort}">`;
   return `<tr>
@@ -514,7 +515,7 @@ function movimientoRow(
       <td class="num" style="white-space:nowrap">
         <select name="${side}_t" class="campo-subrayado" style="width:auto;min-width:8rem;margin-right:0.4rem;font-size:0.8rem">
           <option value="movimiento"${kind === 'movimiento' ? ' selected' : ''}>Movimiento</option>
-          <option value="cuenta"${kind === 'cuenta' ? ' selected' : ''}>Cuenta</option>
+          <option value="banco"${kind === 'banco' ? ' selected' : ''}>Banco (Mercado Pago)</option>
           <option value="referencia"${kind === 'referencia' ? ' selected' : ''}>Referencia</option>
         </select>
         <input class="campo-subrayado" type="number" name="${side}_i" value="${amount}" min="0" step="0.01" inputmode="decimal" placeholder="0" style="text-align:right;max-width:7.5rem" aria-label="Importe">
@@ -632,7 +633,7 @@ operativaRoutes.get('/operativa/caja', async (c) => {
   const selected = day ?? utcToday();
   const fechaInput = dateInput(selected);
 
-  const [cashRows, lineRows, turnos, historial] = await Promise.all([
+  const [cashRows, lineRows, turnos, historial, mpOrders] = await Promise.all([
     db
       .select()
       .from(cashDays)
@@ -671,6 +672,19 @@ operativaRoutes.get('/operativa/caja', async (c) => {
       .where(eq(cashDays.storeId, access.storeId))
       .orderBy(desc(cashDays.reportDate), desc(cashDays.id))
       .limit(20),
+    db
+      .select({ totalCents: sql<number>`coalesce(sum(${orders.totalCents}), 0)` })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.storeId, access.storeId),
+          eq(orders.paymentMethod, 'mercadopago'),
+          eq(orders.status, 'paid'),
+          gte(orders.createdAt, selected),
+          lt(orders.createdAt, nextDay(selected)),
+        ),
+      )
+      .limit(1),
   ]);
 
   const cash = cashRows[0];
@@ -685,22 +699,29 @@ operativaRoutes.get('/operativa/caja', async (c) => {
     (turnoTarde?.totalCents ?? 0) +
     (turnoNoche?.totalCents ?? 0);
 
+  // Banco (Mercado Pago): auto-poblado desde órdenes MP pagadas del día
+  const totalBanco = mpOrders[0]?.totalCents ?? 0;
+
   // Líneas manuales
   const entradasManuales = lineRows.filter(l => l.side === 'entrada' && l.kind === 'movimiento');
   const salidasManuales = lineRows.filter(l => l.side === 'salida' && l.kind === 'movimiento');
-  const cuentas = lineRows.filter(l => l.side === 'entrada' && l.kind === 'cuenta');
+  const bancos = lineRows.filter(l => l.side === 'entrada' && l.kind === 'banco');
   const referencias = lineRows.filter(l => l.side === 'salida' && l.kind === 'referencia');
 
   const totalEntradasManuales = entradasManuales.reduce((a, l) => a + l.amountCents, 0);
   const totalSalidasManuales = salidasManuales.reduce((a, l) => a + l.amountCents, 0);
-  const totalCuentas = cuentas.reduce((a, l) => a + l.amountCents, 0);
+  const totalBancos = bancos.reduce((a, l) => a + l.amountCents, 0);
   // totalReferencias = referencias.reduce((a, l) => a + l.amountCents, 0); // no se usa en totales
 
-  // Fórmulas del printeo legacy
-  const totalEntradas = prevOpening + totalTurnos + totalEntradasManuales; // BANCO (cuentas) NO suma
-  const totalSalidas = totalSalidasManuales; // referencias NO suman
+  // Fórmulas actualizadas:
+  // Entradas = saldo anterior + turnos + entradas manuales (BANCO NO suma a entradas)
+  const totalEntradas = prevOpening + totalTurnos + totalEntradasManuales;
+  // Salidas = salidas manuales (referencias NO suman)
+  const totalSalidas = totalSalidasManuales;
+  // Total del día = Entradas - Salidas
   const totalDia = totalEntradas - totalSalidas;
-  const totalNeto = totalDia - totalCuentas; // restar BANCO/cuentas
+  // Total Neto (efectivo) = Total del día - Banco (MP)
+  const totalNeto = totalDia - totalBanco;
 
   const cabecera = `<div class="cabecera-papel" style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap">
       <h1>Caja</h1>
@@ -719,9 +740,11 @@ operativaRoutes.get('/operativa/caja', async (c) => {
     { label: 'TURNO TARDE', amount: turnoTarde?.totalCents ?? 0, isSubtotal: false },
     { label: 'TURNO NOCHE', amount: turnoNoche?.totalCents ?? 0, isSubtotal: false },
     { label: 'TOTAL TURNOS', amount: totalTurnos, isSubtotal: true },
+    // BANCO (Mercado Pago) - auto-poblado, NO suma a entradas, se muestra solo informativo
+    { label: 'BANCO (Mercado Pago)', amount: totalBanco, isSubtotal: false },
   ].concat(
     entradasManuales.map(l => ({ label: l.detail.toUpperCase(), amount: l.amountCents, isSubtotal: false })),
-    cuentas.map(l => ({ label: l.detail.toUpperCase() + ' (cuenta)', amount: l.amountCents, isSubtotal: false })),
+    bancos.map(l => ({ label: l.detail.toUpperCase() + ' (Banco MP)', amount: l.amountCents, isSubtotal: false })),
   );
 
   const salidasRows = [
@@ -786,7 +809,7 @@ operativaRoutes.get('/operativa/caja/movimientos', async (c) => {
   const selected = day ?? utcToday();
   const fechaInput = dateInput(selected);
 
-  const [cashRows, lineRows] = await Promise.all([
+  const [cashRows, lineRows, mpOrders] = await Promise.all([
     db
       .select()
       .from(cashDays)
@@ -808,14 +831,37 @@ operativaRoutes.get('/operativa/caja/movimientos', async (c) => {
         ),
       )
       .orderBy(asc(cashLines.sort), asc(cashLines.id)),
+    db
+      .select({ totalCents: sql<number>`coalesce(sum(${orders.totalCents}), 0)` })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.storeId, access.storeId),
+          eq(orders.paymentMethod, 'mercadopago'),
+          eq(orders.status, 'paid'),
+          gte(orders.createdAt, selected),
+          lt(orders.createdAt, nextDay(selected)),
+        ),
+      )
+      .limit(1),
   ]);
 
   const cash = cashRows[0];
+  const totalBancoMP = mpOrders[0]?.totalCents ?? 0;
+
   const entradas = lineRows.filter(l => l.side === 'entrada').map(l => ({
     detail: l.detail,
     amountCents: l.amountCents,
     kind: l.kind as CajaKind,
   }));
+  // Auto-poblar Banco (Mercado Pago) como primera fila de entradas si hay órdenes MP pagadas
+  if (totalBancoMP > 0) {
+    entradas.unshift({
+      detail: 'Banco (Mercado Pago) - Auto',
+      amountCents: totalBancoMP,
+      kind: 'banco' as CajaKind,
+    });
+  }
   const salidas = lineRows.filter(l => l.side === 'salida').map(l => ({
     detail: l.detail,
     amountCents: l.amountCents,
@@ -842,8 +888,8 @@ operativaRoutes.get('/operativa/caja/movimientos', async (c) => {
       </div>
       <p class="muted" style="font-size:0.85rem;margin-top:0.5rem">
         <strong>Movimiento</strong> = suma en su columna |
-        <strong>Cuenta</strong> (BANCO/monedas/ahorro) = no suma en Entradas, resta en Total Neto |
-        <strong>Referencia</strong> (Venta M Pago) = se muestra pero no suma en Salidas
+        <strong>Banco (Mercado Pago)</strong> = no suma en Entradas, resta en Total Neto (se auto-puebla desde órdenes MP) |
+        <strong>Referencia</strong> = se muestra pero no suma en Salidas
       </p>
       <button type="submit">Guardá los movimientos</button>
     </form>`;
@@ -1899,12 +1945,8 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
       (sr?.lubricantesSalesCents ?? 0) + (sr?.variosSalesCents ?? 0);
     // Planilla: Facturado total playeros = GNC + lubricantes y varios
     const facturadoPlayeros = gncImporteTotal + lubricantesVariosImporte;
-    // Carga manual del admin (columnas por turno de daily_activity_summary)
-    const facturacionServicios = manualFacturacion(summary, shift, 'Servicios');
-    const facturacionMiniMercado = manualFacturacion(summary, shift, 'MiniMercado');
-    // Planilla: Total recaudación = facturado playeros + servicios + mini mercado
-    const totalRecaudacion =
-      facturadoPlayeros + facturacionServicios + facturacionMiniMercado;
+    // Total recaudación = facturado playeros (sin facturación servicios/mini mercado)
+    const totalRecaudacion = facturadoPlayeros;
 
     return {
       shift,
@@ -1917,8 +1959,6 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
       gncImporteTotal,
       lubricantesVariosImporte,
       facturadoPlayeros,
-      facturacionServicios,
-      facturacionMiniMercado,
       totalRecaudacion,
     };
   });
@@ -1932,8 +1972,6 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
       gncImporteTotal: acc.gncImporteTotal + r.gncImporteTotal,
       lubricantesVariosImporte: acc.lubricantesVariosImporte + r.lubricantesVariosImporte,
       facturadoPlayeros: acc.facturadoPlayeros + r.facturadoPlayeros,
-      facturacionServicios: acc.facturacionServicios + r.facturacionServicios,
-      facturacionMiniMercado: acc.facturacionMiniMercado + r.facturacionMiniMercado,
       totalRecaudacion: acc.totalRecaudacion + r.totalRecaudacion,
     }),
     {
@@ -1943,8 +1981,6 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
       gncImporteTotal: 0,
       lubricantesVariosImporte: 0,
       facturadoPlayeros: 0,
-      facturacionServicios: 0,
-      facturacionMiniMercado: 0,
       totalRecaudacion: 0,
     },
   );
@@ -2026,16 +2062,6 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
               ${summaryRows.map(r => `<td></td><td style="${TD_NUM}">${formatArs(r.facturadoPlayeros)}</td>`).join('')}
               <td></td><td style="${TD_NUM}">${formatArs(totals.facturadoPlayeros)}</td>
             </tr>
-            <tr>
-              <td style="${TD}"><strong>Facturación servicios/materiales</strong></td>
-              ${summaryRows.map(r => `<td></td><td style="${TD_NUM}"><input type="number" name="servicios_${r.shift}" step="0.01" min="0" value="${(r.facturacionServicios / 100).toFixed(2)}" style="width:7rem;margin:0;text-align:right" aria-label="Servicios ${r.label}"></td>`).join('')}
-              <td></td><td style="${TD_NUM}">${formatArs(totals.facturacionServicios)}</td>
-            </tr>
-            <tr>
-              <td style="${TD}"><strong>Facturación mini mercado</strong></td>
-              ${summaryRows.map(r => `<td></td><td style="${TD_NUM}"><input type="number" name="mini_${r.shift}" step="0.01" min="0" value="${(r.facturacionMiniMercado / 100).toFixed(2)}" style="width:7rem;margin:0;text-align:right" aria-label="Mini mercado ${r.label}"></td>`).join('')}
-              <td></td><td style="${TD_NUM}">${formatArs(totals.facturacionMiniMercado)}</td>
-            </tr>
             <tr style="background:var(--paper-head)">
               <td style="${TD}"><strong>TOTAL RECAUDACIÓN</strong></td>
               ${summaryRows.map(r => `<td></td><td style="${TD_NUM}"><strong>${formatArs(r.totalRecaudacion)}</strong></td>`).join('')}
@@ -2044,9 +2070,6 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
           </tbody>
         </table>
         </div>
-        <p class="muted" style="margin:0.5rem 0 0;font-size:0.8rem">Completá los importes de facturación de servicios y mini mercado (carga manual) y guardá.</p>
-        <button type="submit" style="margin-top:0.5rem">Guardar facturación</button>
-      </form>
       
       <div class="seccion-papel" style="margin-top:1rem">
         <h2>Observaciones</h2>
@@ -2428,14 +2451,7 @@ operativaRoutes.get('/operativa/actividades/print', requireRole('admin'), async 
       },
       buildActivitiesTable(activities, shiftReportsData, shifts, shiftLabels),
       { text: '', margin: [0, 10, 0, 0] }, // spacer
-      // Table: Facturación manual (servicios/minimercado)
-      {
-        text: 'Facturación Manual (Admin)',
-        style: 'sectionHeader',
-        margin: [0, 10, 0, 5],
-      },
-      buildFacturacionTable(existingSummary, shifts),
-      { text: '', margin: [0, 10, 0, 0] }, // spacer
+      
       // Table: Recaudación / Caja
       {
         text: 'Resumen de Caja',
@@ -2489,7 +2505,7 @@ operativaRoutes.get('/operativa/caja/print', requireRole('admin'), async (c) => 
   const fechaStr = dateInput(selected);
 
   // Get data
-  const [cash, shiftReportsData, lines] = await Promise.all([
+  const [cash, shiftReportsData, lines, mpOrders] = await Promise.all([
     db
       .select()
       .from(cashDays)
@@ -2517,14 +2533,28 @@ operativaRoutes.get('/operativa/caja/print', requireRole('admin'), async (c) => 
       .where(
         and(
           eq(cashLines.storeId, access.storeId),
-          eq(cashLines.reportDate, utcToday()),
+          eq(cashLines.reportDate, selected),
         ),
       )
       .orderBy(asc(cashLines.sort)),
+    db
+      .select({ totalCents: sql<number>`coalesce(sum(${orders.totalCents}), 0)` })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.storeId, access.storeId),
+          eq(orders.paymentMethod, 'mercadopago'),
+          eq(orders.status, 'paid'),
+          gte(orders.createdAt, selected),
+          lt(orders.createdAt, nextDay(selected)),
+        ),
+      )
+      .limit(1),
   ]);
 
   const cashDay = cash[0];
   const prevOpening = cashDay?.openingCents ?? 0;
+  const totalBanco = mpOrders[0]?.totalCents ?? 0;
 
   const turnoManana = shiftReportsData.find((t) => t.shift === 'morning');
   const turnoTarde = shiftReportsData.find((t) => t.shift === 'evening');
@@ -2574,7 +2604,7 @@ operativaRoutes.get('/operativa/caja/print', requireRole('admin'), async (c) => 
         style: 'sectionHeader',
         margin: [0, 10, 0, 5],
       },
-      buildCajaTotalesTable(cashDay, shiftReportsData),
+      buildCajaTotalesTable(cashDay, shiftReportsData, totalBanco),
     ],
     styles: {
       header: { fontSize: 16, bold: true, color: '#111111' },
@@ -2657,7 +2687,7 @@ function buildCajaSalidasTable(cashDay: any): any {
   };
 }
 
-function buildCajaTotalesTable(cashDay: any, shiftReportsData: any[]): any {
+function buildCajaTotalesTable(cashDay: any, shiftReportsData: any[], totalBanco: number): any {
   const prevOpening = cashDay?.openingCents ?? 0;
 
   const turnoManana = shiftReportsData.find((t) => t.shift === 'morning');
@@ -2675,7 +2705,8 @@ function buildCajaTotalesTable(cashDay: any, shiftReportsData: any[]): any {
 
   const totalEntradas = prevOpening + totalTurnos;
   const totalSalidas = 0; // placeholder
-  const saldoFinal = totalEntradas - totalSalidas;
+  const totalDia = totalEntradas - totalSalidas;
+  const totalNeto = totalDia - totalBanco;
 
   const rows: any[][] = [
     [
@@ -2685,8 +2716,10 @@ function buildCajaTotalesTable(cashDay: any, shiftReportsData: any[]): any {
   ];
 
   rows.push([{ text: 'TOTAL ENTRADAS', style: boldTableCellStyle }, { text: formatArsPdf(totalEntradas), style: boldTableCellStyle }]);
+  rows.push([{ text: 'BANCO (Mercado Pago)', style: boldTableCellStyle }, { text: formatArsPdf(totalBanco), style: boldTableCellStyle }]);
   rows.push([{ text: 'TOTAL SALIDAS', style: boldTableCellStyle }, { text: formatArsPdf(totalSalidas), style: boldTableCellStyle }]);
-  rows.push([{ text: 'SALDO FINAL CALCULADO', style: boldTableCellStyle }, { text: formatArsPdf(saldoFinal), style: boldTableCellStyle }]);
+  rows.push([{ text: 'TOTAL DEL DÍA', style: boldTableCellStyle }, { text: formatArsPdf(totalDia), style: boldTableCellStyle }]);
+  rows.push([{ text: 'TOTAL NETO (Efectivo)', style: boldTableCellStyle }, { text: formatArsPdf(totalNeto), style: boldTableCellStyle }]);
   rows.push([{ text: 'CIERRE DECLARADO', style: baseTableCellStyle }, { text: formatArsPdf(closingDeclared), style: baseTableCellStyle }]);
   rows.push([{ text: 'CIERRE CONTADO', style: baseTableCellStyle }, { text: formatArsPdf(closingCounted), style: baseTableCellStyle }]);
   rows.push([{ text: 'DIFERENCIA', style: boldTableCellStyle }, { text: formatArsPdf(difference), style: boldTableCellStyle }]);
@@ -2714,23 +2747,16 @@ function parseReadings(
   body: Record<string, unknown>,
 ): ReadingInput[] | string {
   const out: ReadingInput[] = [];
-  const seen = new Set<number>();
   let any = false;
+  // 6 filas fijas: manguera 1..6, todas GNC
   for (let i = 0; i < READING_ROWS; i++) {
-    const sur = str(body[`r${i}_surtidor`]);
-    const prod = str(body[`r${i}_producto`]);
+    const manguera = i + 1;
     const ini = str(body[`r${i}_apertura`]);
     const fin = str(body[`r${i}_cierre`]);
-    if (!sur && !prod && !ini && !fin) continue;
+    // Si ambos vacíos, saltar esta manguera
+    if (!ini && !fin) continue;
     any = true;
-    const label = `En la fila ${i + 1}`;
-    const s = Number(sur);
-    if (!Number.isInteger(s) || s < 1 || s > 6) {
-      return `${label}: la manguera debe ser entre 1 y 6.`;
-    }
-    if (!isFuel(prod)) {
-      return `${label}: elegí un producto válido.`;
-    }
+    const label = `Manguera ${manguera}`;
     const opening = Number(ini);
     if (ini === '' || !Number.isFinite(opening) || opening < 0) {
       return `${label}: la lectura inicial no es válida.`;
@@ -2742,13 +2768,9 @@ function parseReadings(
     if (closing < opening) {
       return `${label}: la lectura final no puede ser menor que la inicial.`;
     }
-    if (seen.has(s)) {
-      return `${label}: repetís la manguera ${s}.`;
-    }
-    seen.add(s);
     out.push({
-      manguera: s,
-      product: prod,
+      manguera,
+      product: 'gnc',
       opening,
       closing,
     });
@@ -2758,31 +2780,20 @@ function parseReadings(
 }
 
 function readingsFormHtml(): string {
-  const mangueraOpts =
-    `<option value="">—</option>` +
-    [1, 2, 3, 4, 5, 6].map((n) => `<option value="${n}">${n}</option>`).join('');
-  const fuelOpts = `<option value="">—</option>` + fuelOptions();
   let out = '';
   for (let i = 0; i < READING_ROWS; i++) {
+    const manguera = i + 1;
     out += `<div class="row" style="border-top:1px solid #e4e4e7;padding-top:0.5rem;margin-top:0.5rem">
-      <div style="flex:1;min-width:6rem">
-        <label for="r${i}_surtidor">Manguera</label>
-        <select id="r${i}_surtidor" name="r${i}_surtidor">${mangueraOpts}</select>
-      </div>
-      <div style="flex:1;min-width:7rem">
-        <label for="r${i}_producto">Producto</label>
-        <select id="r${i}_producto" name="r${i}_producto">${fuelOpts}</select>
-      </div>
-      <div style="flex:1;min-width:7rem">
-        <label for="r${i}_apertura">Lectura inicial</label>
+      <div style="flex:1;min-width:5rem">
+        <label for="r${i}_apertura">Manguera ${manguera} - Lectura inicial (m³)</label>
         <input id="r${i}_apertura" name="r${i}_apertura" type="number" step="0.001" min="0">
       </div>
-      <div style="flex:1;min-width:7rem">
-        <label for="r${i}_cierre">Lectura final</label>
+      <div style="flex:1;min-width:5rem">
+        <label for="r${i}_cierre">Manguera ${manguera} - Lectura final (m³)</label>
         <input id="r${i}_cierre" name="r${i}_cierre" type="number" step="0.001" min="0">
       </div>
       <div style="flex:1;min-width:7rem">
-        <label for="r${i}_precio">Precio por litro (pesos)</label>
+        <label for="r${i}_precio">Manguera ${manguera} - Precio por metro cúbico (pesos)</label>
         <input id="r${i}_precio" name="r${i}_precio" type="number" step="0.01" min="0">
       </div>
     </div>`;
@@ -3314,7 +3325,6 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
     .map(
       (r) => `<tr>
         <td style="${TD}">${r.manguera}</td>
-        <td style="${TD}">${FUEL_LABELS[r.product]}</td>
         <td style="${TD}">${r.openingReading}</td>
         <td style="${TD}">${r.closingReading}</td>
         <td style="${TD}"><strong>${r.volume}</strong></td>
@@ -3366,16 +3376,15 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
       <table class="papel" style="margin-top:0.75rem">
         <thead><tr>
           <th style="${TH}">Manguera</th>
-          <th style="${TH}">Producto</th>
-          <th style="${TH}">Lect. inicial</th>
-          <th style="${TH}">Lect. final</th>
-          <th style="${TH}">Volumen (L)</th>
-          <th style="${TH}">Precio/L</th>
+          <th style="${TH}">Lect. inicial (m³)</th>
+          <th style="${TH}">Lect. final (m³)</th>
+          <th style="${TH}">Volumen (m³)</th>
+          <th style="${TH}">Precio/m³</th>
           <th style="${TH}">Total</th>
         </tr></thead>
-        <tbody>${bodyRows || `<tr><td colspan="7" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
+        <tbody>${bodyRows || `<tr><td colspan="6" style="${TD}" class="muted">${NO_DATA}</td></tr>`}</tbody>
         <tfoot><tr>
-          <td colspan="4" style="${TD}"><strong>Suma del detalle</strong></td>
+          <td colspan="3" style="${TD}"><strong>Suma del detalle</strong></td>
           <td style="${TD}"><strong>${totalVolume.toFixed(2)}</strong></td>
           <td style="${TD}"></td>
           <td style="${TD}"><strong>${formatArs(totalCents)}</strong></td>
@@ -3484,10 +3493,9 @@ operativaRoutes.get(
 
     // Lecturas de mangueras
     const lecturasRows: any[][] = [
-      headerRow(['Manguera', 'Producto', 'Apertura', 'Cierre', 'Volumen', 'Total']),
+      headerRow(['Manguera', 'Apertura (m³)', 'Cierre (m³)', 'Volumen (m³)', 'Total']),
       ...readings.map((r) => [
         cell(String(r.manguera)),
-        cell(FUEL_LABELS[r.product]),
         cell(formatNumPdf(r.openingReading)),
         cell(formatNumPdf(r.closingReading)),
         cell(formatNumPdf(r.volume)),
@@ -3496,8 +3504,7 @@ operativaRoutes.get(
     ];
     if (readings.length === 0) {
       lecturasRows.push([
-        { text: 'Sin lecturas de mangueras.', colSpan: 6, style: 'tableCell' },
-        {},
+        { text: 'Sin lecturas de mangueras.', colSpan: 5, style: 'tableCell' },
         {},
         {},
         {},
@@ -3595,7 +3602,7 @@ operativaRoutes.get(
           style: 'sectionHeader',
           margin: [0, 10, 0, 5],
         },
-        { table: { widths: ['auto', '*', 'auto', 'auto', 'auto', 'auto'], body: lecturasRows } },
+        { table: { widths: ['auto', 'auto', 'auto', 'auto', 'auto'], body: lecturasRows } },
         { text: '', margin: [0, 10, 0, 0] },
         {
           text: 'Ventas del turno',

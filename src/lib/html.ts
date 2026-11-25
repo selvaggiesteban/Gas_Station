@@ -318,8 +318,8 @@ function sidebarLinks(user: { name: string; points: number; role: string }): str
         { href: '/admin/usuarios', label: 'Usuarios' },
         { href: '/admin/tienda', label: 'Tienda' },
         { href: '/admin/desafios', label: 'Desafíos' },
-        { href: '/operativa/caja', label: 'Caja diaria' },
         { href: '/operativa/resumen-diario', label: 'Resumen diario' },
+        { href: '/operativa/caja', label: 'Caja diaria' },
         { href: '/ranking', label: 'Ranking' },
       ]
     : isPlayero

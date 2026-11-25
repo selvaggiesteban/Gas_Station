@@ -1551,7 +1551,6 @@ adminRoutes.get('/admin/ordenes/nueva', async (c) => {
           <label for="pago">Método de pago</label>
           <select id="pago" name="pago" required>
             <option value="efectivo">Efectivo</option>
-            <option value="transferencia">Transferencia bancaria</option>
             <option value="mercadopago">Mercado Pago</option>
           </select>
           <label for="notas">Notas (opcional)</label>
@@ -1591,7 +1590,7 @@ adminRoutes.post('/admin/ordenes/nueva', async (c) => {
       { error: 'Elegí un cliente.' },
     );
   }
-  if (pago !== 'efectivo' && pago !== 'transferencia' && pago !== 'mercadopago') {
+  if (pago !== 'efectivo' && pago !== 'mercadopago') {
     return render(
       c,
       'Nueva orden',
@@ -1799,7 +1798,7 @@ adminRoutes.get('/admin/ordenes/:id', async (c) => {
         <div class="row">
           <span class="pill">${ORDER_STATUS_LABELS[order.status] ?? order.status}</span>
           <span class="muted">Creada: ${fmtFecha(order.createdAt)}</span>
-          <span class="muted">Pago: ${{ efectivo: 'Efectivo', transferencia: 'Transferencia bancaria', mercadopago: 'Mercado Pago' }[order.paymentMethod] ?? order.paymentMethod}</span>
+          <span class="muted">Pago: ${{ efectivo: 'Efectivo', mercadopago: 'Mercado Pago' }[order.paymentMethod] ?? order.paymentMethod}</span>
         </div>
         <p class="muted">Cliente: ${cliente ? `${escapeHtml(cliente.name)} · ${escapeHtml(cliente.email)}` : `#${order.userId}`} · Tienda: ${store ? escapeHtml(store.name) : `#${order.storeId}`}${gestor ? ` · Playero: ${escapeHtml(gestor.name)}` : ''}</p>
         ${acciones}

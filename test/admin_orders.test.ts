@@ -534,7 +534,7 @@ describe('admin órdenes', () => {
       '/admin/ordenes/nueva',
       {
         userId: String(esc.clienteId),
-        pago: 'transferencia',
+        pago: 'efectivo',
         notas: 'Venta en el mostrador',
         [`qty_${esc.productId}`]: '3',
       },
@@ -599,7 +599,7 @@ describe('admin órdenes', () => {
 
     const sinProductos = await post(
       '/admin/ordenes/nueva',
-      { userId: String(esc.clienteId), pago: 'transferencia' },
+      { userId: String(esc.clienteId), pago: 'efectivo' },
       esc.adminCookie,
     );
     expect(sinProductos.status).toBe(422);
@@ -607,7 +607,7 @@ describe('admin órdenes', () => {
 
     const stockInsuficiente = await post(
       '/admin/ordenes/nueva',
-      { userId: String(esc.clienteId), pago: 'transferencia', [`qty_${esc.productId}`]: '5' },
+      { userId: String(esc.clienteId), pago: 'efectivo', [`qty_${esc.productId}`]: '5' },
       esc.adminCookie,
     );
     expect(stockInsuficiente.status).toBe(422);
@@ -622,10 +622,12 @@ describe('admin órdenes', () => {
     expect(formulario.status).toBe(200);
     const html = await formulario.text();
     expect(html).toContain('<option value="efectivo">Efectivo</option>');
+    expect(html).toContain('<option value="mercadopago">Mercado Pago</option>');
+    expect(html).not.toContain('value="transferencia"');
     const iEfectivo = html.indexOf('value="efectivo"');
-    const iTransferencia = html.indexOf('value="transferencia"');
+    const iMercadopago = html.indexOf('value="mercadopago"');
     expect(iEfectivo).toBeGreaterThan(-1);
-    expect(iEfectivo).toBeLessThan(iTransferencia);
+    expect(iEfectivo).toBeLessThan(iMercadopago);
 
     const creada = await post(
       '/admin/ordenes/nueva',

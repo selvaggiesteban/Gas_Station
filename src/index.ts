@@ -44,8 +44,8 @@ app.get('/', (c) => {
       texto: 'Etiquetá tu marca en tickets, comprobantes y toda la comunicación con tus clientes.',
     },
     {
-      titulo: 'Órdenes con transferencia',
-      texto: 'Generá órdenes de compra, registrá el pago por transferencia y marcá el envío.',
+      titulo: 'Órdenes en efectivo y Mercado Pago',
+      texto: 'Generá órdenes de compra, registrá el pago en efectivo o con Mercado Pago y marcá el envío.',
     },
     {
       titulo: 'Puntos y desafíos',
@@ -79,7 +79,7 @@ app.get('/', (c) => {
       features: [
         'Usuarios ilimitados',
         'Marca propia y etiquetas',
-        'Órdenes con transferencia',
+        'Órdenes en efectivo y Mercado Pago',
         'Desafíos y ranking',
         'Soporte prioritario',
       ],

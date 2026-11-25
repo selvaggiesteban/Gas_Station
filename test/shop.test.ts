@@ -92,12 +92,12 @@ function checkoutForm(
 ): FormData {
   const fd = new FormData();
   fd.append('cupon', opts.cupon ?? '');
-  fd.append('metodo', opts.metodo ?? 'transferencia');
+  fd.append('metodo', opts.metodo ?? 'efectivo');
   if (opts.comprobante) {
     const blob = new Blob([new Uint8Array([1, 2, 3, 4])], {
       type: 'application/pdf',
     });
-    fd.append('comprobante', blob, 'transferencia.pdf');
+    fd.append('comprobante', blob, 'comprobante.pdf');
   }
   return fd;
 }
@@ -185,7 +185,7 @@ describe('shop', () => {
     }>();
     expect(order).toBeTruthy();
     expect(order!.status).toBe('pending');
-    expect(order!.payment_method).toBe('transferencia');
+    expect(order!.payment_method).toBe('efectivo');
     expect(order!.subtotal_cents).toBe(1600000);
     expect(order!.total_cents).toBe(1600000);
     expect(order!.proof_key).toBeTruthy();
@@ -309,7 +309,7 @@ describe('shop', () => {
     const email = `invitado.${Date.now()}@test.com`;
     const fd = new FormData();
     fd.append('cupon', '');
-    fd.append('metodo', 'transferencia');
+    fd.append('metodo', 'efectivo');
     fd.append('nombre', 'Fede Invitado');
     fd.append('email', email);
     fd.append('password', 'supersecret1');
@@ -370,7 +370,7 @@ describe('shop', () => {
 
     const fd = new FormData();
     fd.append('cupon', '');
-    fd.append('metodo', 'transferencia');
+    fd.append('metodo', 'efectivo');
     fd.append('nombre', 'Otro Invitado');
     fd.append('email', 'zoya.existente@test.com');
     fd.append('password', 'supersecret1');
@@ -387,7 +387,7 @@ describe('shop', () => {
   });
 
   describe('métodos de pago', () => {
-    it('GET /checkout muestra los tres botones y Mercado Pago ya no está deshabilitado', async () => {
+    it('GET /checkout muestra los dos botones: efectivo y Mercado Pago', async () => {
       const cookie = await register('Fabian Metodos', 'fabian.metodos@test.com');
       const productId = await insertProduct({
         name: 'Aceite Mineral',
@@ -401,11 +401,11 @@ describe('shop', () => {
       expect(res.status).toBe(200);
       const html = await res.text();
       expect(html).toContain('name="metodo" value="efectivo"');
-      expect(html).toContain('name="metodo" value="transferencia"');
       expect(html).toContain('name="metodo" value="mercadopago"');
+      expect(html).not.toContain('name="metodo" value="transferencia"');
       expect(html).toContain('Confirmá en efectivo');
-      expect(html).toContain('Confirmá por transferencia');
       expect(html).toContain('Confirmá con Mercado Pago');
+      expect(html).not.toContain('Confirmá por transferencia');
       expect(html).not.toContain('próximamente');
     });
 

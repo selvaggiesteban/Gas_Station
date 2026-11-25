@@ -36,7 +36,6 @@ export const ORDER_STATUS_VALUES = [
 
 export const PAYMENT_METHOD_VALUES = [
   'efectivo',
-  'transferencia',
   'mercadopago',
 ] as const;
 
@@ -266,7 +265,7 @@ export const orders = sqliteTable(
     ),
     paymentChk: check(
       'orders_payment_chk',
-      sql`payment_method in ('efectivo','transferencia','mercadopago')`,
+      sql`payment_method in ('efectivo','mercadopago')`,
     ),
     totalsChk: check(
       'orders_totals_chk',
@@ -452,7 +451,7 @@ export const SHIFT_VALUES = ['morning', 'evening', 'night'] as const;
 export const CASH_STATUS_VALUES = ['open', 'closed'] as const;
 
 export const CASH_SIDE_VALUES = ['entrada', 'salida'] as const;
-export const CASH_KIND_VALUES = ['movimiento', 'cuenta', 'referencia'] as const;
+export const CASH_KIND_VALUES = ['movimiento', 'banco', 'referencia'] as const;
 
 export const FUEL_PRODUCT_VALUES = ['nafta', 'gasoil', 'diesel', 'gnc'] as const;
 
@@ -521,7 +520,7 @@ export const cashLines = sqliteTable(
     ),
     kindIdx: index('cash_lines_kind_idx').on(t.kind),
     sideChk: check('cash_lines_side_chk', sql`side in ('entrada','salida')`),
-    kindChk: check('cash_lines_kind_chk', sql`kind in ('movimiento','cuenta','referencia')`),
+    kindChk: check('cash_lines_kind_chk', sql`kind in ('movimiento','banco','referencia')`),
     amountChk: check('cash_lines_amount_chk', sql`amount_cents >= 0`),
     detailChk: check('cash_lines_detail_chk', sql`length(trim(detail)) > 0`),
   }),

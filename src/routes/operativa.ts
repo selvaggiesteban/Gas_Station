@@ -1472,13 +1472,11 @@ operativaRoutes.get('/operativa/ventas/nuevo', async (c) => {
         <label for="turno">Turno</label>
         <select id="turno" name="turno">${shiftOptions()}</select>
         <label for="efectivo">Efectivo (pesos)</label>
-        <input id="efectivo" name="efectivo" type="number" step="0.01" min="0" value="0" required>
+        <input id="efectivo" name="efectivo" type="number" step="0.01" min="0" value="" placeholder="0" inputmode="decimal" required>
         <label for="tarjeta">Tarjeta (pesos)</label>
-        <input id="tarjeta" name="tarjeta" type="number" step="0.01" min="0" value="0" required>
-        <label for="transferencia">Transferencia (pesos)</label>
-        <input id="transferencia" name="transferencia" type="number" step="0.01" min="0" value="0" required>
+        <input id="tarjeta" name="tarjeta" type="number" step="0.01" min="0" value="" placeholder="0" inputmode="decimal" required>
         <label for="fiado">Fiado (pesos)</label>
-        <input id="fiado" name="fiado" type="number" step="0.01" min="0" value="0" required>
+        <input id="fiado" name="fiado" type="number" step="0.01" min="0" value="" placeholder="0" inputmode="decimal" required>
         <label for="notas">Notas (opcional)</label>
         <input id="notas" name="notas" type="text">
         <button type="submit">Guardá el resumen</button>
@@ -1742,11 +1740,11 @@ operativaRoutes.get('/operativa/actividades/nuevo', async (c) => {
         <label for="turno">Turno</label>
         <select id="turno" name="turno">${shiftOptions()}</select>
         <label for="gnc_apertura">GNC apertura (m³)</label>
-        <input id="gnc_apertura" name="gnc_apertura" type="number" step="1" min="0" value="0" required>
+        <input id="gnc_apertura" name="gnc_apertura" type="number" step="1" min="0" value="" placeholder="0" inputmode="decimal" required>
         <label for="gnc_cierre">GNC cierre (m³)</label>
-        <input id="gnc_cierre" name="gnc_cierre" type="number" step="1" min="0" value="0" required>
+        <input id="gnc_cierre" name="gnc_cierre" type="number" step="1" min="0" value="" placeholder="0" inputmode="decimal" required>
         <label for="gnc_ventas">Ventas de GNC (pesos)</label>
-        <input id="gnc_ventas" name="gnc_ventas" type="number" step="0.01" min="0" value="0" required>
+        <input id="gnc_ventas" name="gnc_ventas" type="number" step="0.01" min="0" value="" placeholder="0" inputmode="decimal" required>
         <label style="display:flex;gap:0.5rem;align-items:center;font-weight:400">
           <input type="checkbox" name="revision" value="on" style="width:auto"> Revisión de mangueras hecha
         </label>

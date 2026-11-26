@@ -1600,7 +1600,7 @@ adminRoutes.get('/admin/ordenes/nueva', async (c) => {
       <td style="${TD}">${escapeHtml(p.name)}</td>
       <td style="${TD}">${formatArs(p.priceCents)}</td>
       <td style="${TD}">${p.stock === null ? 'Sin límite' : p.stock}</td>
-      <td style="${TD_NUM}"><input type="number" name="qty_${p.id}" form="orden-nueva-form" value="0" min="0" step="1" inputmode="numeric" style="max-width:6rem;text-align:right" aria-label="Cantidad de ${escapeHtml(p.name)}"></td>
+      <td style="${TD_NUM}"><input type="number" name="qty_${p.id}" form="orden-nueva-form" value="" placeholder="0" min="0" step="1" inputmode="numeric" style="max-width:6rem;text-align:right" aria-label="Cantidad de ${escapeHtml(p.name)}"></td>
     </tr>`,
     )
     .join('');

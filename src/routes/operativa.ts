@@ -2197,12 +2197,14 @@ operativaRoutes.post('/operativa/resumen-diario/facturacion', requireRole('admin
 
 // Helper: format currency
 function formatArsPdf(cents: number): string {
-  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(cents / 100);
+  const c = Number.isFinite(cents) ? cents : 0;
+  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(c / 100);
 }
 
 // Helper: format number with thousands separator
 function formatNumPdf(n: number): string {
-  return new Intl.NumberFormat('es-AR').format(n);
+  const v = Number.isFinite(n) ? n : 0;
+  return new Intl.NumberFormat('es-AR').format(v);
 }
 
 // ==================== PDF SHARED CONSTANTS ====================
@@ -3207,17 +3209,11 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
       variosQty,
       variosSalesCents,
       totalSalesCents,
-      sobre1Hora: null,
       sobre1ImporteCents,
-      sobre2Hora: null,
       sobre2ImporteCents,
-      sobre3Hora: null,
       sobre3ImporteCents,
-      sobre4Hora: null,
       sobre4ImporteCents,
-      sobre5Hora: null,
       sobre5ImporteCents,
-      sobre6Hora: null,
       sobre6ImporteCents,
       totalEnsobradoCents,
       puenteEntrante,
@@ -3320,18 +3316,17 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
   const totalVolume = Number(totals[0]?.volume ?? 0);
 
   const sobres = [
-    { n: 1, hora: report.sobre1Hora, cents: report.sobre1ImporteCents },
-    { n: 2, hora: report.sobre2Hora, cents: report.sobre2ImporteCents },
-    { n: 3, hora: report.sobre3Hora, cents: report.sobre3ImporteCents },
-    { n: 4, hora: report.sobre4Hora, cents: report.sobre4ImporteCents },
-    { n: 5, hora: report.sobre5Hora, cents: report.sobre5ImporteCents },
-    { n: 6, hora: report.sobre6Hora, cents: report.sobre6ImporteCents },
+    { n: 1, cents: report.sobre1ImporteCents },
+    { n: 2, cents: report.sobre2ImporteCents },
+    { n: 3, cents: report.sobre3ImporteCents },
+    { n: 4, cents: report.sobre4ImporteCents },
+    { n: 5, cents: report.sobre5ImporteCents },
+    { n: 6, cents: report.sobre6ImporteCents },
   ];
   const sobreRows = sobres
     .map(
       (s) => `<tr>
         <td style="${TD}">Sobre ${s.n}</td>
-        <td style="${TD}">${s.hora ? escapeHtml(s.hora) : '—'}</td>
         <td style="${TD_NUM}">${formatArs(s.cents)}</td>
       </tr>`,
     )
@@ -3731,17 +3726,11 @@ operativaRoutes.post('/operativa/rendicion/:id/editar', requireRole('admin', 'st
       variosQty,
       variosSalesCents,
       totalSalesCents,
-      sobre1Hora: null,
       sobre1ImporteCents,
-      sobre2Hora: null,
       sobre2ImporteCents,
-      sobre3Hora: null,
       sobre3ImporteCents,
-      sobre4Hora: null,
       sobre4ImporteCents,
-      sobre5Hora: null,
       sobre5ImporteCents,
-      sobre6Hora: null,
       sobre6ImporteCents,
       totalEnsobradoCents,
       puenteEntrante,
@@ -3822,14 +3811,46 @@ operativaRoutes.get(
     if (!report) {
       return notFound(c, 'Rendición de turno', '/operativa/rendicion');
     }
+    // Ensure all numeric fields have safe defaults
+    const safe = (v: any) => {
+    const n = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+    const r = {
+      ...report,
+      gncQty: safe(report.gncQty),
+      priceCents: safe(report.priceCents),
+      gncSalesCents: safe(report.gncSalesCents),
+      lubricantesSalesCents: safe(report.lubricantesSalesCents),
+      variosQty: safe(report.variosQty),
+      variosPriceCents: safe(report.variosPriceCents),
+      variosSalesCents: safe(report.variosSalesCents),
+      totalSalesCents: safe(report.totalSalesCents),
+      totalEnsobradoCents: safe(report.totalEnsobradoCents),
+      puenteEntrante: safe(report.puenteEntrante),
+      puenteSaliente: safe(report.puenteSaliente),
+      sobre1ImporteCents: safe(report.sobre1ImporteCents),
+      sobre2ImporteCents: safe(report.sobre2ImporteCents),
+      sobre3ImporteCents: safe(report.sobre3ImporteCents),
+      sobre4ImporteCents: safe(report.sobre4ImporteCents),
+      sobre5ImporteCents: safe(report.sobre5ImporteCents),
+      sobre6ImporteCents: safe(report.sobre6ImporteCents),
+    };
     if (!(await canManageStore(db, user, report.storeId))) {
       return denied(c, 'No tenés permiso sobre la tienda de esa rendición.');
     }
-    const readings = await db
+    const readingsRaw = await db
       .select()
       .from(shiftReportReadings)
       .where(eq(shiftReportReadings.reportId, report.id))
       .orderBy(asc(shiftReportReadings.manguera));
+    const readings = readingsRaw.map(rd => ({
+      ...rd,
+      openingReading: safe(rd.openingReading),
+      closingReading: safe(rd.closingReading),
+      volume: safe(rd.volume),
+      totalCents: safe(rd.totalCents),
+    }));
     const cashier = report.cashierId
       ? await db
           .select({ name: users.name })
@@ -3871,63 +3892,62 @@ operativaRoutes.get(
       headerRow(['Rubro', 'Cantidad', 'Precio unitario', 'Importe']),
       [
         cell('GNC'),
-        cell(`${formatNumPdf(report.gncQty)} m³`),
-        cell(formatArsPdf(report.priceCents)),
-        cell(formatArsPdf(report.gncSalesCents)),
+        cell(`${formatNumPdf(r.gncQty)} m³`),
+        cell(formatArsPdf(r.priceCents)),
+        cell(formatArsPdf(r.gncSalesCents)),
       ],
       [
         cell('Lubricantes'),
         cell('—'),
         cell('—'),
-        cell(formatArsPdf(report.lubricantesSalesCents)),
+        cell(formatArsPdf(r.lubricantesSalesCents)),
       ],
       [
         cell('Varios'),
-        cell(`${formatNumPdf(report.variosQty)} un.`),
-        cell(formatArsPdf(report.variosPriceCents)),
-        cell(formatArsPdf(report.variosSalesCents)),
+        cell(`${formatNumPdf(r.variosQty)} un.`),
+        cell(formatArsPdf(r.variosPriceCents)),
+        cell(formatArsPdf(r.variosSalesCents)),
       ],
       [
         boldCell('Total'),
         cell(''),
         cell(''),
-        boldCell(formatArsPdf(report.totalSalesCents)),
+        boldCell(formatArsPdf(r.totalSalesCents)),
       ],
     ];
 
     // Recaudación ensobrada
     const sobres = [
-      { n: 1, hora: report.sobre1Hora, cents: report.sobre1ImporteCents },
-      { n: 2, hora: report.sobre2Hora, cents: report.sobre2ImporteCents },
-      { n: 3, hora: report.sobre3Hora, cents: report.sobre3ImporteCents },
-      { n: 4, hora: report.sobre4Hora, cents: report.sobre4ImporteCents },
-      { n: 5, hora: report.sobre5Hora, cents: report.sobre5ImporteCents },
-      { n: 6, hora: report.sobre6Hora, cents: report.sobre6ImporteCents },
+      { n: 1, cents: r.sobre1ImporteCents },
+      { n: 2, cents: r.sobre2ImporteCents },
+      { n: 3, cents: r.sobre3ImporteCents },
+      { n: 4, cents: r.sobre4ImporteCents },
+      { n: 5, cents: r.sobre5ImporteCents },
+      { n: 6, cents: r.sobre6ImporteCents },
     ];
     const ensobradoRows: any[][] = [
-      headerRow(['Sobre', 'Hora', 'Importe']),
+      headerRow(['Sobre', 'Importe']),
       ...sobres.map((s) => [
         cell(`Sobre ${s.n}`),
-        cell(s.hora ?? '—'),
         cell(formatArsPdf(s.cents)),
       ]),
       [
         boldCell('Total ensobrado'),
         cell(''),
-        boldCell(formatArsPdf(report.totalEnsobradoCents)),
+        boldCell(formatArsPdf(r.totalEnsobradoCents)),
       ],
     ];
 
     // Puente de medición
-    const merma = report.puenteEntrante - report.puenteSaliente;
+    const merma = r.puenteEntrante - r.puenteSaliente;
     const puenteRows: any[][] = [
       headerRow(['Concepto', 'm³']),
-      [cell('Entrante'), cell(report.puenteEntrante.toFixed(3))],
-      [cell('Saliente'), cell(report.puenteSaliente.toFixed(3))],
+      [cell('Entrante'), cell(r.puenteEntrante.toFixed(3))],
+      [cell('Saliente'), cell(r.puenteSaliente.toFixed(3))],
       [boldCell('Merma'), boldCell(merma.toFixed(3))],
     ];
 
-    const observaciones = report.observaciones ?? report.notes;
+    const observaciones = r.observaciones ?? r.notes;
 
     const docDefinition: any = {
       pageOrientation: 'portrait',
@@ -3940,13 +3960,13 @@ operativaRoutes.get(
           margin: [0, 0, 0, 5],
         },
         {
-          text: `Fecha: ${fmtDay(report.reportDate)} | Turno: ${SHIFT_LABELS[report.shift]} | Tienda: ${report.storeId}`,
+          text: `Fecha: ${fmtDay(r.reportDate)} | Turno: ${SHIFT_LABELS[r.shift]} | Tienda: ${r.storeId}`,
           style: 'subheader',
           alignment: 'center',
           margin: [0, 0, 0, 3],
         },
         {
-          text: `Operador: ${operador} | Inicio: ${MOMENT_FMT.format(report.shiftStart)} | Fin: ${MOMENT_FMT.format(report.shiftEnd)}`,
+          text: `Operador: ${operador} | Inicio: ${MOMENT_FMT.format(r.shiftStart)} | Fin: ${MOMENT_FMT.format(r.shiftEnd)}`,
           style: 'subheader',
           alignment: 'center',
           margin: [0, 0, 0, 10],
@@ -3956,7 +3976,7 @@ operativaRoutes.get(
           style: 'sectionHeader',
           margin: [0, 10, 0, 5],
         },
-        { table: { widths: ['auto', 'auto', 'auto', 'auto', 'auto'], body: lecturasRows } },
+        { table: { widths: [40, 80, 80, 80, 100], body: lecturasRows } },
         { text: '', margin: [0, 10, 0, 0] },
         {
           text: 'Ventas del turno',
@@ -4001,8 +4021,14 @@ operativaRoutes.get(
       defaultStyle: { font: 'Roboto' },
     };
 
-    const pdfDoc = pdfMake.createPdf(docDefinition);
-    const pdfBuffer: Uint8Array = await pdfDoc.getBuffer().then((buffer: Buffer) => new Uint8Array(buffer));
+    let pdfBuffer: Uint8Array;
+    try {
+      const pdfDoc = pdfMake.createPdf(docDefinition);
+      pdfBuffer = await pdfDoc.getBuffer().then((buffer: Buffer) => new Uint8Array(buffer));
+    } catch (e) {
+      console.error('[PDF ERROR]', e);
+      return c.json({ error: 'PDF generation failed', detail: String(e) }, 500);
+    }
 
     return new Response(pdfBuffer as unknown as BodyInit, {
       headers: {

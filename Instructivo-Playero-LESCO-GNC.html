@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="es-AR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Instructivo Playero - LESCO GNC</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; max-width: 800px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    h1 { color: #000; border-bottom: 2px solid #000; padding-bottom: 0.5rem; }
+    h2 { color: #333; margin-top: 2rem; }
+    h3 { color: #555; }
+    .warning { background: #fff3cd; border: 1px solid #ffc107; padding: 1rem; border-radius: 4px; margin: 1rem 0; }
+    .important { background: #f8d7da; border: 1px solid #f5c6cb; padding: 1rem; border-radius: 4px; margin: 1rem 0; color: #721c24; font-weight: bold; }
+    .success { background: #d4edda; border: 1px solid #c3e6cb; padding: 1rem; border-radius: 4px; margin: 1rem 0; color: #155724; }
+    code { background: #f4f4f4; padding: 0.2rem 0.4rem; border-radius: 3px; font-family: monospace; }
+    ul { padding-left: 1.5rem; }
+    li { margin: 0.5rem 0; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    th, td { border: 1px solid #ddd; padding: 0.75rem; text-align: left; }
+    th { background: #f4f4f4; font-weight: 600; }
+    .step { margin: 1rem 0; padding: 1rem; background: #fafafa; border-left: 4px solid #000; }
+    .step-number { font-weight: bold; color: #000; }
+  </style>
+</head>
+<body>
+  <h1>Instructivo Playero - LESCO GNC</h1>
+  <p><strong>Versión:</strong> Actualizada 26/11/2026 | <strong>App:</strong> <a href="https://app.lescognc.workers.dev" target="_blank">https://app.lescognc.workers.dev</a></p>
+
+  <div class="important">
+    ⚠️ <strong>CAMBIOS IMPORTANTES (25/11):</strong> Este instructivo refleja los cambios aprobados en la reunión del 25/11. Los puntos clave modificados están marcados con 🔄.
+  </div>
+
+  <h2>1. Acceso y Login</h2>
+  <ol>
+    <li>Ingresar a <code>https://app.lescognc.workers.dev</code></li>
+    <li>Click en "Accedé" → ingresar email y contraseña</li>
+    <li>Si es la primera vez: el admin te dio la contraseña inicial (12 caracteres, se muestra una sola vez)</li>
+    <li>Al loguear: el sistema detecta tu rol <strong>playero (store_manager)</strong> y te muestra solo lo que necesitás</li>
+  </ol>
+
+  <h2>2. Rendición de Turno 🔄 <strong>COMPLETAMENTE AUTOMÁTICA</strong></h2>
+  <p>Desde el 25/11 la rendición es 100% automática. <strong>No tocás fecha, turno ni horarios.</strong></p>
+
+  <div class="step">
+    <span class="step-number">Paso 1:</span> Click en <strong>"Cargá una rendición"</strong> (o Menú → Operativa → Rendición de turno → Cargá una rendición)
+  </div>
+
+  <div class="step">
+    <span class="step-number">Paso 2:</span> El formulario ya viene pre-llenado:
+    <ul>
+      <li><strong>Fecha:</strong> Hoy (no editable) 🔄</li>
+      <li><strong>Turno:</strong> Se calcula solo según la hora actual (Mañana 6-14, Tarde 14-22, Noche 22-6) 🔄</li>
+      <li><strong>Operador:</strong> Tu nombre (readonly)</li>
+      <li><strong>Horarios:</strong> Se calculan solos en el servidor 🔄</li>
+    </ul>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Paso 3 - Lecturas de Mangueras (GNC):</span>
+    <p>Completá <strong>solo apertura y cierre</strong> de las 6 mangueras (m³, 3 decimales):</p>
+    <table>
+      <tr><th>Manguera</th><th>Lectura Inicial (m³)</th><th>Lectura Final (m³)</th></tr>
+      <tr><td>1</td><td>ej: 1234.567</td><td>ej: 1456.789</td></tr>
+      <tr><td>2</td><td>ej: 2345.678</td><td>ej: 2567.890</td></tr>
+      <tr><td>3</td><td>ej: 3456.789</td><td>ej: 3678.901</td></tr>
+      <tr><td>4</td><td>ej: 4567.890</td><td>ej: 4789.012</td></tr>
+      <tr><td>5</td><td>ej: 5678.901</td><td>ej: 5890.123</td></tr>
+      <tr><td>6</td><td>ej: 6789.012</td><td>ej: 6901.234</td></tr>
+    </table>
+    <p class="success">✅ <strong>Venta GNC se calcula sola:</strong> (Final - Inicial) de cada manguera → suma 6 mangueras → × Precio GNC (desde Tienda). <strong>No escribís cantidad ni importe GNC.</strong> 🔄</p>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Paso 4 - Precio GNC:</span>
+    <p>Viene <strong>pre-llenado desde Tienda</strong> (readonly). Dice: <em>"Precio GNC (desde Tienda): $ 699,00 /m³"</em>. No lo toqués. 🔄</p>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Paso 5 - Otros rubros:</span>
+    <ul>
+      <li><strong>Lubricantes:</strong> Importe total en pesos (ej: 164000)</li>
+      <li><strong>Varios:</strong> Cantidad + Precio unitario → Importe se calcula solo</li>
+      <li><strong>Total ventas:</strong> Se calcula solo (GNC + Lubricantes + Varios)</li>
+    </ul>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Paso 6 - Recaudación Ensobrada (Sobres):</span>
+    <p><strong>Solo importe</strong> (sin horarios) 🔄. Máx. 6 sobres:</p>
+    <ul>
+      <li>Sobre 1 - Importe (pesos)</li>
+      <li>Sobre 2 - Importe (pesos)</li>
+      <li>... hasta Sobre 6</li>
+      <li><strong>Total ensobrado</strong> se calcula solo</li>
+    </ul>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Paso 7 - Puente de Medición:</span>
+    <ul>
+      <li><strong>Puente entrante (m³):</strong> Lectura del medidor al inicio</li>
+      <li><strong>Puente saliente (m³):</strong> Lectura del medidor al fin</li>
+      <li>La merma/excedencia se calcula: Entrante - Saliente</li>
+    </ul>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Paso 8 - Confirmación y Guardado:</span>
+    <p class="important">🔄 <strong>NUEVO:</strong> Antes de guardar aparece un modal: <strong>"¿Estás seguro de guardar esta rendición? Verificá las lecturas antes de confirmar."</strong> Click en "Aceptar" para confirmar.</  </div>
+
+  <div class="step">
+    <span class="step-number">Paso 9 - Edición si hay error 🔄:</span>
+    <p>Si te equivocaste: en el detalle de la rendición hay botón <strong>"Editar"</strong>. Podés corregir lecturas, puente, lubricantes, varios, sobres, observaciones. Al guardar se recalcula todo y actualiza el Resumen Diario.</p>
+  </div>
+
+  <h2>3. Órdenes (Venta de Lubricantes/Varios)</h2>
+  <p><strong>Una orden = un producto vendido</strong> (cliente playa + método de pago + producto + cantidad).</p>
+
+  <div class="step">
+    <span class="step-number">Paso 1:</span> Menú → <strong>Órdenes</strong> → <strong>Nueva orden</strong>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Paso 2:</span> Completar:
+    <ul>
+      <li><strong>Cliente playa</strong> (se crea si no existe: Menú → Nuevo cliente)</li>
+      <li><strong>Método de pago:</strong> 🔄 <strong>Solo 2 opciones:</strong> <strong>Efectivo</strong> o <strong>Mercado Pago</strong> (NO transferencia)</li>
+      <li><strong>Producto:</strong> Seleccionar de la lista (lubricantes, varios)</li>
+      <li><strong>Cantidad:</strong> ej: 1</li>
+    </ul>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Paso 3:</span> Click <strong>"Guardá"</strong>. La orden queda <strong>Pendiente</strong>.
+  </div>
+
+  <div class="step">
+    <span class="step-number">Paso 4 - Si el cliente paga con 2 métodos:</span>
+    <p>Ej: Compra 4 aceites, 2 en efectivo + 2 en Mercado Pago → <strong>Creás 2 órdenes</strong> (una por método de pago).</p>
+  </div>
+
+  <div class="step">
+    <span class="step-number">Paso 5 - Aprobación:</span>
+    <p>El gestor ve la orden en "Órdenes pendientes" y la <strong>Aprueba</strong> o <strong>Rechaza</strong> (con motivo). Vos no podés aprobar tus propias órdenes.</p>
+  </div>
+
+  <h2>4. Nuevo Cliente (Alta desde Playa)</h2>
+  <ol>
+    <li>Menú → <strong>Nuevo cliente</strong></li>
+    <li>Completar: Nombre, Email, DNI (opcional), Teléfono (opcional)</li>
+    <li>Click <strong>"Creá cliente"</strong></li>
+    <li><strong>¡IMPORTANTE!</strong> El sistema muestra la contraseña generada <strong>UNA SOLA VEZ</strong> (12 caracteres). Anotála y dásela al cliente. No se puede recuperar.</li>
+    <li>El cliente ya puede loguearse y comprar.</li>
+  </ol>
+
+  <h2>5. Caja Diaria (Solo visualización para playero)</h2>
+  <p>El admin/gestor carga la apertura y cierre. Vos podés ver el estado en Menú → Operativa → Caja diaria.</p>
+  <ul>
+    <li>Si no hay caja abierta: dice "Cargá la apertura para abrirla"</li>
+    <li>Si hay caja: ves entradas (saldo anterior + turnos), salidas, total del día, total neto</li>
+    <li>🔄 <strong>NUEVO:</strong> El "Saldo día anterior" se arrastra solo del cierre contado del día anterior (automático desde el 1° dic)</li>
+  </ul>
+
+  <h2>6. Resumen Diario (Solo admin/gestor)</h2>
+  <p>Vos no accedés, pero es bueno saber qué ve el admin:</p>
+  <ul>
+    <li>Ingreso GNC = Puente entrante - Saliente (dato real medidor) 🔄</li>
+    <li>Venta GNC = Suma (Final - Inicial) 6 mangueras</li>
+    <li>Mermas/Excedencias = Ingreso - Venta 🔄</li>
+    <li>% Total = SUMA de % por turno (no promedio) 🔄</li>
+    <li>Total recaudación = Solo facturado playeros (sin servicios/minimercado) 🔄</li>
+  </ul>
+
+  <h2>7. Reglas de Turnos y Horarios 🔄</h2>
+  <table>
+    <tr><th>Turno</th><th>Horario</th><th>Fecha de la rendición</th></tr>
+    <tr><td>Mañana</td><td>06:00 - 14:00</td><td>Día actual</td></tr>
+    <tr><td>Tarde</td><td>14:00 - 22:00</td><td>Día actual</td></tr>
+    <tr><td>Noche</td><td>22:00 - 06:00</td><td>Día de inicio (ej: 25/11). El fin es 06:00 del día siguiente (26/11)</td></tr>
+  </table>
+  <p class="warning">⚠️ <strong>Ventana de carga:</strong> ±15 min desde el horario oficial. Fuera de eso: penalización para store_manager (sin bono + -15 pts, piso 0).</p>
+
+  <h2>8. Métodos de Pago 🔄 <strong>ACTUALIZADO</strong></h2>
+  <div class="important">
+    <strong>SOLO 2 MÉTODOS:</strong>
+    <ul>
+      <li>💵 <strong>Efectivo</strong></li>
+      <li>📱 <strong>Mercado Pago</strong></li>
+    </ul>
+    <p><strong>NO EXISTE MÁS:</strong> Transferencia bancaria (eliminada del sistema completo)</p>
+  </div>
+
+  <h2>9. Tips y Errores Comunes</h2>
+  <ul>
+    <li><strong>Inputs numéricos:</strong> Ahora arrancan vacíos (placeholder "0"). Escribí directo, no hace falta borrar el cero. 🔄</li>
+    <li><strong>Contraseña cliente:</strong> Se muestra UNA SOLA VEZ al crear. Anotála.</li>
+    <li><strong>Precio GNC:</strong> No lo toqués. Lo cambia el admin en Tienda → Producto GNC → Editar (solo precio).</li>
+    <li><strong>Turno noche:</strong> La fecha es la de inicio (ej: 25/11). El sistema pone fin = 06:00 del día siguiente.</li>
+    <li><strong>Orden pendiente:</strong> Si el cliente se arrepiente, el gestor la rechaza y se devuelve el stock.</li>
+    <li><strong>Stock GNC:</strong> Ilimitado (no se controla).</li>
+    <li><strong>Edición rendición:</strong> Si te equivocaste, usá "Editar" en el detalle. Se recalcula todo.</li>
+  </ul>
+
+  <h2>10. Contacto y Soporte</h2>
+  <ul>
+    <li><strong>Admin/Gestor:</strong> Para dudas operativas, precios, aprobar órdenes</li>
+    <li><strong>Problemas técnicos:</strong> Reportar al admin con captura de pantalla</li>
+    <li><strong>Credenciales prod:</strong> admin@lescognc.com / gestor@lescognc.com / cliente@lescognc.com (pass: Lescognc2026!)</li>
+  </ul>
+
+  <hr>
+  <p style="text-align:center;color:#666;font-size:0.9rem">
+    Instructivo Playero LESCO GNC — Actualizado 26/11/2026 según reuniones 24/11 y 25/11<br>
+    App: <a href="https://app.lescognc.workers.dev">https://app.lescognc.workers.dev</a>
+  </p>
+</body>
+</html>

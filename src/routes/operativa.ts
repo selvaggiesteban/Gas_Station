@@ -2829,10 +2829,6 @@ function readingsFormHtml(): string {
         <label for="r${i}_cierre">Manguera ${manguera} - Lectura final (m³)</label>
         <input id="r${i}_cierre" name="r${i}_cierre" type="number" step="0.001" min="0">
       </div>
-      <div style="flex:1;min-width:7rem">
-        <label for="r${i}_precio">Manguera ${manguera} - Precio por metro cúbico (pesos)</label>
-        <input id="r${i}_precio" name="r${i}_precio" type="number" step="0.01" min="0">
-      </div>
     </div>`;
   }
   return out;

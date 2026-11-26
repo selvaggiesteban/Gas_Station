@@ -737,6 +737,7 @@ describe('operativa', () => {
     const creada = await post(
       '/operativa/rendicion',
       {
+        turno: 'morning',
         puente_entrante: '1000.5',
         puente_saliente: '900.25',
         lubricantes_sales: '10000',
@@ -802,10 +803,10 @@ describe('operativa', () => {
     expect(row!.total_sales_cents).toBe(
       row!.gnc_qty * row!.price_cents + 1000000 + 2 * 80000,
     );
-    // sobres sin hora
-    expect(row!.sobre_1_hora).toBeNull();
+    // sobres sin hora (columnas dropeadas en migración 0013)
+    expect(row!.sobre_1_hora).toBeUndefined();
     expect(row!.sobre_1_importe_cents).toBe(500000);
-    expect(row!.sobre_2_hora).toBeNull();
+    expect(row!.sobre_2_hora).toBeUndefined();
     expect(row!.sobre_2_importe_cents).toBe(350000);
     expect(row!.total_ensobrado_cents).toBe(850000);
     expect(row!.puente_entrante).toBeCloseTo(1000.5, 5);

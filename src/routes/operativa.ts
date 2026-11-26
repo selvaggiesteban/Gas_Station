@@ -3910,8 +3910,8 @@ operativaRoutes.get(
       ],
       [
         boldCell('Total'),
-        cell(''),
-        cell(''),
+        cell('—'),
+        cell('—'),
         boldCell(formatArsPdf(r.totalSalesCents)),
       ],
     ];
@@ -3933,13 +3933,13 @@ operativaRoutes.get(
       ]),
       [
         boldCell('Total ensobrado'),
-        cell(''),
         boldCell(formatArsPdf(r.totalEnsobradoCents)),
       ],
     ];
 
     // Puente de medición
     const merma = r.puenteEntrante - r.puenteSaliente;
+    
     const puenteRows: any[][] = [
       headerRow(['Concepto', 'm³']),
       [cell('Entrante'), cell(r.puenteEntrante.toFixed(3))],
@@ -3983,21 +3983,21 @@ operativaRoutes.get(
           style: 'sectionHeader',
           margin: [0, 10, 0, 5],
         },
-        { table: { widths: ['*', 'auto', 'auto', 'auto'], body: ventasRows } },
+        { table: { widths: [120, 'auto', 'auto', 'auto'], body: ventasRows } },
         { text: '', margin: [0, 10, 0, 0] },
         {
           text: 'Recaudación ensobrada',
           style: 'sectionHeader',
           margin: [0, 10, 0, 5],
         },
-        { table: { widths: ['*', 'auto', 'auto'], body: ensobradoRows } },
+        { table: { widths: [120, 'auto'], body: ensobradoRows } },
         { text: '', margin: [0, 10, 0, 0] },
         {
           text: 'Puente de medición',
           style: 'sectionHeader',
           margin: [0, 10, 0, 5],
         },
-        { table: { widths: ['*', 'auto'], body: puenteRows } },
+        { table: { widths: [200, 'auto'], body: puenteRows } },
         ...(observaciones
           ? [
               { text: '', margin: [0, 10, 0, 0] },
@@ -4023,6 +4023,7 @@ operativaRoutes.get(
 
     let pdfBuffer: Uint8Array;
     try {
+      
       const pdfDoc = pdfMake.createPdf(docDefinition);
       pdfBuffer = await pdfDoc.getBuffer().then((buffer: Buffer) => new Uint8Array(buffer));
     } catch (e) {

@@ -1172,6 +1172,13 @@ describe('impresión PDF (endpoints /print)', () => {
   });
 
   async function crearRendicion(cookie: string, fecha: string): Promise<number> {
+    // Crear producto GNC para que el PDF tenga precio válido (evita NaN en pdfmake)
+    await env.DB.prepare(
+      `INSERT INTO products (name, category, slug, price_cents, stock, active, description, sort)
+       VALUES ('G.N.C', 'G.N.C', 'gnc', 69900, 0, 1, 'GNC principal', 0)
+       ON CONFLICT(slug) DO UPDATE SET price_cents = 69900`
+    ).run();
+
     const res = await post(
       '/operativa/rendicion',
       {

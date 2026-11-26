@@ -135,6 +135,10 @@ function nextDay(d: Date): Date {
   return new Date(d.getTime() + 24 * 3600 * 1000);
 }
 
+function prevDay(d: Date): Date {
+  return new Date(d.getTime() - 24 * 3600 * 1000);
+}
+
 function dtFrom(v: unknown): Date | null {
   const s = str(v);
   if (!s) return null;
@@ -634,7 +638,7 @@ operativaRoutes.get('/operativa/caja', async (c) => {
   const selected = day ?? utcToday();
   const fechaInput = dateInput(selected);
 
-  const [cashRows, lineRows, turnos, historial, mpOrders] = await Promise.all([
+  const [cashRows, lineRows, turnos, historial, mpOrders, prevCash] = await Promise.all([
     db
       .select()
       .from(cashDays)
@@ -686,10 +690,22 @@ operativaRoutes.get('/operativa/caja', async (c) => {
         ),
       )
       .limit(1),
+    db
+      .select({ closingCountedCents: cashDays.closingCountedCents })
+      .from(cashDays)
+      .where(
+        and(
+          eq(cashDays.storeId, access.storeId),
+          eq(cashDays.reportDate, prevDay(selected)),
+          eq(cashDays.status, 'closed'),
+        ),
+      )
+      .orderBy(desc(cashDays.reportDate))
+      .limit(1),
   ]);
 
   const cash = cashRows[0];
-  const prevOpening = cash ? cash.openingCents : 0;
+  const prevOpening = cash ? cash.openingCents : (prevCash[0]?.closingCountedCents ?? 0);
 
   // Turnos: morning, evening, night → total_cents
   const turnoManana = turnos.find(t => t.shift === 'morning');
@@ -1249,6 +1265,24 @@ operativaRoutes.get('/operativa/caja/nuevo', async (c) => {
   const access = await resolveStore(c, db, c.req.query('tienda'));
   if ('error' in access) return denied(c, access.error);
   const storesHtml = await storeOptions(db, access.storeId);
+
+  // Obtener el cierre contado del día anterior para pre-llenar la apertura
+  const today = utcToday();
+  const yesterday = prevDay(today);
+  const prevCash = await db
+    .select({ closingCountedCents: cashDays.closingCountedCents })
+    .from(cashDays)
+    .where(
+      and(
+        eq(cashDays.storeId, access.storeId),
+        eq(cashDays.reportDate, yesterday),
+        eq(cashDays.status, 'closed'),
+      ),
+    )
+    .orderBy(desc(cashDays.reportDate))
+    .limit(1);
+  const suggestedApertura = prevCash[0]?.closingCountedCents ?? 0;
+
   return render(
     c,
     'Nueva caja',
@@ -1260,7 +1294,8 @@ operativaRoutes.get('/operativa/caja/nuevo', async (c) => {
         <label for="fecha">Fecha del día</label>
         <input id="fecha" name="fecha" type="date" required value="${todayInput()}">
         <label for="apertura">Efectivo de apertura (pesos)</label>
-        <input id="apertura" name="apertura" type="number" step="0.01" min="0" required>
+        <input id="apertura" name="apertura" type="number" step="0.01" min="0" value="${(suggestedApertura / 100).toFixed(2)}" required>
+        ${suggestedApertura > 0 ? `<p class="muted" style="font-size:0.85rem;margin-top:0.25rem">Sugerido: ${formatArs(suggestedApertura)} (cierre contado día anterior)</p>` : ''}
         <label for="notas">Notas (opcional)</label>
         <input id="notas" name="notas" type="text">
         <button type="submit">Abrí la caja</button>

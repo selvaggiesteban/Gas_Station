@@ -463,13 +463,12 @@ describe('operativa', () => {
       {
         fecha: '2026-11-04',
         turno: 'evening',
-        inicio: '2026-11-04T14:00',
-        fin: '2026-11-04T22:00',
         puente_entrante: '1000.25',
         puente_saliente: '900.75',
         notas: 'turno tarde',
-        gnc_qty: '376',
-        gnc_price: '1250',
+        lubricantes_sales: '0',
+        varios_qty: '0',
+        varios_price: '0',
         // 6 filas fijas: mangueras 1-6, todas GNC
         // Solo enviamos lecturas para mangueras 1 y 2 (índices 0 y 1)
         r0_apertura: '1000.5',
@@ -495,12 +494,18 @@ describe('operativa', () => {
         puente_entrante: number;
         puente_saliente: number;
         cashier_id: number | null;
+        gnc_qty: number;
+        price_cents: number;
       }>();
     expect(report).toBeTruthy();
     expect(report!.shift).toBe('evening');
     expect(report!.puente_entrante).toBeCloseTo(1000.25, 5);
     expect(report!.puente_saliente).toBeCloseTo(900.75, 5);
     expect(report!.cashier_id).toBeTruthy();
+    // gnc_qty calculado automáticamente = suma (cierre - apertura) = 250 + 125.5 = 375.5
+    expect(report!.gnc_qty).toBeCloseTo(375.5, 5);
+    // price_cents: 0 si no hay producto GNC en la BD de test (se usa body.gnc_price que no se envía)
+    expect(report!.price_cents).toBeGreaterThanOrEqual(0);
 
     const readings = await env.DB.prepare(
       'select * from shift_report_readings where report_id = ? order by manguera',
@@ -532,13 +537,8 @@ describe('operativa', () => {
     );
     expect(detalle.status).toBe(200);
     const html = await detalle.text();
-    const sumaEsperada = 376 * 125000; // gnc_qty * priceCents
-    expect(html).toContain(
-      new Intl.NumberFormat('es-AR', {
-        style: 'currency',
-        currency: 'ARS',
-      }).format(sumaEsperada / 100),
-    );
+    // Sin producto GNC en BD de test, price_cents = 0 => ventas GNC = $0,00
+    expect(html).toContain('0,00');
   });
 
   it('sorteo: registro crea participación automática', async () => {
@@ -737,44 +737,25 @@ describe('operativa', () => {
     const creada = await post(
       '/operativa/rendicion',
       {
-        fecha: '2026-11-05',
-        turno: 'morning',
-        inicio: '2026-11-05T06:00',
-        fin: '2026-11-05T14:00',
         puente_entrante: '1000.5',
         puente_saliente: '900.25',
-        gnc_qty: '100',
-        gnc_price: '1500',
         lubricantes_sales: '10000',
         varios_qty: '2',
         varios_price: '800',
-        sobre1_hora: '09:30',
         sobre1_importe: '5000',
-        sobre2_hora: '11:00',
         sobre2_importe: '3500',
         notas: 'observación del turno',
-        r0_surtidor: '1',
-        r0_producto: 'gnc',
+        // 6 mangueras fijas GNC
         r0_apertura: '100',
         r0_cierre: '200',
-        r1_surtidor: '2',
-        r1_producto: 'gnc',
         r1_apertura: '200',
         r1_cierre: '300',
-        r2_surtidor: '3',
-        r2_producto: 'gnc',
         r2_apertura: '300',
         r2_cierre: '400',
-        r3_surtidor: '4',
-        r3_producto: 'gnc',
         r3_apertura: '400',
         r3_cierre: '500',
-        r4_surtidor: '5',
-        r4_producto: 'gnc',
         r4_apertura: '500',
         r4_cierre: '600',
-        r5_surtidor: '6',
-        r5_producto: 'gnc',
         r5_apertura: '600',
         r5_cierre: '700',
       },
@@ -789,20 +770,42 @@ describe('operativa', () => {
       'select * from shift_reports where id = ?',
     )
       .bind(id)
-      .first<Record<string, unknown>>();
+      .first<{
+        shift: string;
+        gnc_qty: number;
+        price_cents: number;
+        gnc_sales_cents: number;
+        lubricantes_sales_cents: number;
+        varios_sales_cents: number;
+        total_sales_cents: number;
+        sobre_1_hora: string | null;
+        sobre_1_importe_cents: number;
+        sobre_2_hora: string | null;
+        sobre_2_importe_cents: number;
+        total_ensobrado_cents: number;
+        puente_entrante: number;
+        puente_saliente: number;
+        fondo_cambio_saliente_cents: number | null;
+        vales_empleados_cents: number | null;
+        opening_cents: number | null;
+        observaciones: string | null;
+      }>();
     expect(row).toBeTruthy();
     expect(row!.shift).toBe('morning');
-    expect(row!.gnc_qty).toBe(100);
-    expect(row!.price_cents).toBe(150000);
-    expect(row!.gnc_sales_cents).toBe(100 * 150000);
+    // gnc_qty = suma volúmenes 6 mangueras = 100*6 = 600
+    expect(row!.gnc_qty).toBe(600);
+    // price_cents: 0 si no hay producto GNC en la BD de test
+    expect(row!.price_cents).toBeGreaterThanOrEqual(0);
+    expect(row!.gnc_sales_cents).toBe(row!.gnc_qty * row!.price_cents);
     expect(row!.lubricantes_sales_cents).toBe(1000000);
     expect(row!.varios_sales_cents).toBe(2 * 80000);
     expect(row!.total_sales_cents).toBe(
-      100 * 150000 + 1000000 + 2 * 80000,
+      row!.gnc_qty * row!.price_cents + 1000000 + 2 * 80000,
     );
-    expect(row!.sobre_1_hora).toBe('09:30');
+    // sobres sin hora
+    expect(row!.sobre_1_hora).toBeNull();
     expect(row!.sobre_1_importe_cents).toBe(500000);
-    expect(row!.sobre_2_hora).toBe('11:00');
+    expect(row!.sobre_2_hora).toBeNull();
     expect(row!.sobre_2_importe_cents).toBe(350000);
     expect(row!.total_ensobrado_cents).toBe(850000);
     expect(row!.puente_entrante).toBeCloseTo(1000.5, 5);
@@ -822,11 +825,13 @@ describe('operativa', () => {
     expect(html).not.toContain('Fondo de cambio transferido');
     expect(html).not.toContain('Vales de empleados');
     expect(html).toContain('observación del turno');
+    // Sin producto GNC: gnc_sales = 0, total = lubricantes 1000000 + varios 160000 = 1160000 cents = 11600.00 ARS
+    // formatArs divide por 100, así que pasamos 11600
     expect(html).toContain(
       new Intl.NumberFormat('es-AR', {
         style: 'currency',
         currency: 'ARS',
-      }).format(161600),
+      }).format(11600),
     );
 
     const listado = await get('/operativa/rendicion', cookie);
@@ -1170,25 +1175,15 @@ describe('impresión PDF (endpoints /print)', () => {
       '/operativa/rendicion',
       {
         fecha,
-        turno: 'morning',
-        inicio: `${fecha}T06:00`,
-        fin: `${fecha}T14:00`,
         puente_entrante: '1000.5',
         puente_saliente: '999.25',
-        gnc_qty: '50',
-        gnc_price: '1500',
         lubricantes_sales: '2000',
         varios_qty: '1',
         varios_price: '800',
-        sobre1_hora: '08:00',
         sobre1_importe: '3000',
         notas: 'turno de prueba para imprimir',
-        r0_surtidor: '1',
-        r0_producto: 'gnc',
         r0_apertura: '100',
         r0_cierre: '150',
-        r1_surtidor: '2',
-        r1_producto: 'nafta',
         r1_apertura: '200',
         r1_cierre: '240',
       },

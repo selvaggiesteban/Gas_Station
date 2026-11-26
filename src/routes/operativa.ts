@@ -278,30 +278,31 @@ function shiftOptions(selected?: string): string {
 }
 
 // Precio único de GNC: se toma del producto GNC de la tienda (tabla products).
-// Prioriza la categoría exacta 'gnc'; si no, busca por categoría/slug/nombre.
+// Busca EXACTO: name = 'G.N.C' AND category = 'G.N.C' (blindado: solo precio editable).
 async function findGncProduct(
   db: Db,
 ): Promise<{ name: string; priceCents: number } | undefined> {
   const exact = await db
     .select({ name: products.name, priceCents: products.priceCents })
     .from(products)
-    .where(or(eq(products.category, 'gnc'), eq(products.slug, 'gnc')))
-    .orderBy(asc(products.id))
+    .where(and(eq(products.name, 'G.N.C'), eq(products.category, 'G.N.C')))
     .limit(1);
   if (exact[0]) return exact[0];
-  const parecido = await db
+  // Fallback por si el cliente renombra: busca por slug 'gnc'
+  const bySlug = await db
     .select({ name: products.name, priceCents: products.priceCents })
     .from(products)
-    .where(
-      or(
-        like(products.category, '%gnc%'),
-        like(products.slug, '%gnc%'),
-        like(products.name, '%GNC%'),
-      ),
-    )
+    .where(eq(products.slug, 'gnc'))
+    .limit(1);
+  if (bySlug[0]) return bySlug[0];
+  // Último recurso: categoría 'gnc' exacta
+  const byCat = await db
+    .select({ name: products.name, priceCents: products.priceCents })
+    .from(products)
+    .where(eq(products.category, 'gnc'))
     .orderBy(asc(products.id))
     .limit(1);
-  return parecido[0];
+  return byCat[0];
 }
 
 // Prefijos de columnas por turno en daily_activity_summary
@@ -1931,10 +1932,11 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
     const act = activities.find(a => a.shift === shift);
     const sr = shiftReportsData.find(s => s.shift === shift);
 
-    const gncIngreso = act?.gncOpening ?? 0;
+    // Ingreso GNC = puente de medición (entrante - saliente) — dato real del medidor
+    const gncIngreso = sr ? sr.puenteEntrante - sr.puenteSaliente : 0;
     const gncVentasM3 = act?.gncVolume ?? 0;
-    // Merma = diferencia del puente de medición (entrante − saliente) de la rendición
-    const gncMermasExcedencias = sr ? sr.puenteEntrante - sr.puenteSaliente : 0;
+    // Mermas/Excedencias = Ingreso - Venta (diferencia entre medidor y mangueras)
+    const gncMermasExcedencias = gncIngreso - gncVentasM3;
     const gncPorcentaje = gncIngreso > 0 ? ((gncMermasExcedencias / gncIngreso) * 100) : 0;
     const gncPrecioUnitario = act?.gncSalesCents && gncVentasM3 > 0 
       ? Math.round(act.gncSalesCents / gncVentasM3) 
@@ -1963,7 +1965,7 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
     };
   });
 
-  // Columna TOTALES: suma de los cuatro turnos del día
+  // Columna TOTALES: suma de los turnos del día
   const totals = summaryRows.reduce(
     (acc, r) => ({
       gncIngreso: acc.gncIngreso + r.gncIngreso,
@@ -1984,8 +1986,8 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
       totalRecaudacion: 0,
     },
   );
-  const totalsPorcentaje =
-    totals.gncIngreso > 0 ? (totals.gncMermasExcedencias / totals.gncIngreso) * 100 : 0;
+  // % Total = SUMA de porcentajes por turno (no promedio ponderado)
+  const totalsPorcentaje = summaryRows.reduce((sum, r) => sum + r.gncPorcentaje, 0);
   const totalsPrecioUnitario =
     totals.gncImporteTotal > 0 && totals.gncVentasM3 > 0
       ? Math.round(totals.gncImporteTotal / totals.gncVentasM3)
@@ -2885,136 +2887,105 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
   if ('error' in access) return denied(c, access.error);
   // Precio de GNC único, tomado del producto de la tienda (tabla products).
   const gncProduct = await findGncProduct(db);
-  const gncPriceInput = gncProduct
+  const gncPriceInfo = gncProduct
     ? `<p class="muted" style="margin:0 0 0.35rem">Precio GNC (desde Tienda): <strong>${formatArs(gncProduct.priceCents)}</strong> /m³</p>
             <input id="gnc_price" name="gnc_price" type="hidden" value="${(gncProduct.priceCents / 100).toFixed(2)}">`
-    : `<input id="gnc_price" name="gnc_price" type="number" step="0.01" min="0" value="0">`;
+    : `<input id="gnc_price" name="gnc_price" type="hidden" value="0">`;
+  // Calcular turno actual según hora
+  const now = new Date();
+  const hour = now.getHours();
+  let currentShift: Shift;
+  if (hour >= 6 && hour < 14) currentShift = 'morning';
+  else if (hour >= 14 && hour < 22) currentShift = 'evening';
+  else currentShift = 'night';
+  const shiftLabel = SHIFT_LABELS[currentShift];
+  // Fecha y hora de inicio/fin según turno (se calculan en servidor)
+  const today = todayInput();
   return render(
     c,
     'Nueva rendición de turno',
     `<div class="card">
       <h1>Rendición de turno</h1>
-      <form method="post" action="/operativa/rendicion">
+      <form method="post" action="/operativa/rendicion" id="form-rendicion">
+        <input type="hidden" name="fecha" value="${today}">
+        <input type="hidden" name="turno" value="${currentShift}">
+        <input type="hidden" name="inicio" id="inicio-hidden">
+        <input type="hidden" name="fin" id="fin-hidden">
         <h2>Datos del turno</h2>
         <div class="grid">
           <div>
-            <label for="fecha">Fecha</label>
-            <input id="fecha" name="fecha" type="date" required value="${todayInput()}">
+            <label>Fecha</label>
+            <input type="text" value="${today}" readonly style="background:#f4f4f5;color:#666">
           </div>
           <div>
-            <label for="turno">Turno</label>
-            <select id="turno" name="turno">${shiftOptions()}</select>
+            <label>Turno</label>
+            <input type="text" value="${shiftLabel}" readonly style="background:#f4f4f5;color:#666">
           </div>
           <div>
             <label for="operador">Operador</label>
             <input id="operador" name="operador" type="text" required value="${escapeHtml(user.name)}" readonly>
           </div>
         </div>
-        <div class="grid">
-          <div>
-            <label for="inicio">Inicio del turno</label>
-            <input id="inicio" name="inicio" type="datetime-local" required>
-          </div>
-          <div>
-            <label for="fin">Fin del turno</label>
-            <input id="fin" name="fin" type="datetime-local" required>
-          </div>
-        </div>
         
         <h2 style="margin-top:1.25rem">Lecturas de mangueras (GNC)</h2>
-        <p class="muted">Completá una fila por manguera usada en el turno.</p>
+        <p class="muted">Completá una fila por manguera usada en el turno. La venta de GNC se calcula automáticamente (final - inicial) × precio.</p>
         ${readingsFormHtml()}
         
         <h2 style="margin-top:1.25rem">Ventas del turno</h2>
+        ${gncPriceInfo}
         <div class="grid">
           <div>
-            <label for="gnc_qty">GNC - Cantidad (m³)</label>
-            <input id="gnc_qty" name="gnc_qty" type="number" step="1" min="0" value="0">
-          </div>
-          <div>
-            <label for="gnc_price">GNC - Precio unitario (pesos/m³)</label>
-            ${gncPriceInput}
-          </div>
-          <div>
-            <label for="gnc_sales">GNC - Importe (pesos)</label>
-            <input id="gnc_sales" name="gnc_sales" type="number" step="0.01" min="0" value="0" readonly style="background:#f4f4f5">
-          </div>
-          <div>
             <label for="lubricantes_sales">Lubricantes - Importe total (pesos)</label>
-            <input id="lubricantes_sales" name="lubricantes_sales" type="number" step="0.01" min="0" value="0">
+            <input id="lubricantes_sales" name="lubricantes_sales" type="number" step="0.01" min="0" value="" placeholder="0" inputmode="decimal">
           </div>
           <div>
             <label for="varios_qty">Varios - Cantidad</label>
-            <input id="varios_qty" name="varios_qty" type="number" step="1" min="0" value="0">
+            <input id="varios_qty" name="varios_qty" type="number" step="1" min="0" value="" placeholder="0" inputmode="decimal">
           </div>
           <div>
             <label for="varios_price">Varios - Precio unitario (pesos)</label>
-            <input id="varios_price" name="varios_price" type="number" step="0.01" min="0" value="0">
+            <input id="varios_price" name="varios_price" type="number" step="0.01" min="0" value="" placeholder="0" inputmode="decimal">
           </div>
           <div>
             <label for="varios_sales">Varios - Importe (pesos)</label>
-            <input id="varios_sales" name="varios_sales" type="number" step="0.01" min="0" value="0" readonly style="background:#f4f4f5">
+            <input id="varios_sales" name="varios_sales" type="number" step="0.01" min="0" value="" placeholder="0" readonly style="background:#f4f4f5">
           </div>
           <div style="grid-column:1/-1">
             <label for="total_sales">Total ventas del turno (pesos)</label>
-            <input id="total_sales" name="total_sales" type="number" step="0.01" min="0" value="0" readonly style="background:#f4f4f5;font-weight:700;font-size:1.1rem">
+            <input id="total_sales" name="total_sales" type="number" step="0.01" min="0" value="" placeholder="0" readonly style="background:#f4f4f5;font-weight:700;font-size:1.1rem">
           </div>
         </div>
         
         <h2 style="margin-top:1.25rem">Recaudación ensobrada</h2>
-        <p class="muted">Registrá cada sobre con su hora e importe.</p>
+        <p class="muted">Registrá el importe de cada sobre (máx. 6).</p>
         <div class="grid">
           <div>
-            <label for="sobre1_hora">Sobre 1 - Hora</label>
-            <input id="sobre1_hora" name="sobre1_hora" type="time">
-          </div>
-          <div>
             <label for="sobre1_importe">Sobre 1 - Importe (pesos)</label>
-            <input id="sobre1_importe" name="sobre1_importe" type="number" step="0.01" min="0" value="0">
-          </div>
-          <div>
-            <label for="sobre2_hora">Sobre 2 - Hora</label>
-            <input id="sobre2_hora" name="sobre2_hora" type="time">
+            <input id="sobre1_importe" name="sobre1_importe" type="number" step="0.01" min="0" value="" placeholder="0" inputmode="decimal">
           </div>
           <div>
             <label for="sobre2_importe">Sobre 2 - Importe (pesos)</label>
-            <input id="sobre2_importe" name="sobre2_importe" type="number" step="0.01" min="0" value="0">
-          </div>
-          <div>
-            <label for="sobre3_hora">Sobre 3 - Hora</label>
-            <input id="sobre3_hora" name="sobre3_hora" type="time">
+            <input id="sobre2_importe" name="sobre2_importe" type="number" step="0.01" min="0" value="" placeholder="0" inputmode="decimal">
           </div>
           <div>
             <label for="sobre3_importe">Sobre 3 - Importe (pesos)</label>
-            <input id="sobre3_importe" name="sobre3_importe" type="number" step="0.01" min="0" value="0">
-          </div>
-          <div>
-            <label for="sobre4_hora">Sobre 4 - Hora</label>
-            <input id="sobre4_hora" name="sobre4_hora" type="time">
+            <input id="sobre3_importe" name="sobre3_importe" type="number" step="0.01" min="0" value="" placeholder="0" inputmode="decimal">
           </div>
           <div>
             <label for="sobre4_importe">Sobre 4 - Importe (pesos)</label>
-            <input id="sobre4_importe" name="sobre4_importe" type="number" step="0.01" min="0" value="0">
-          </div>
-          <div>
-            <label for="sobre5_hora">Sobre 5 - Hora</label>
-            <input id="sobre5_hora" name="sobre5_hora" type="time">
+            <input id="sobre4_importe" name="sobre4_importe" type="number" step="0.01" min="0" value="" placeholder="0" inputmode="decimal">
           </div>
           <div>
             <label for="sobre5_importe">Sobre 5 - Importe (pesos)</label>
-            <input id="sobre5_importe" name="sobre5_importe" type="number" step="0.01" min="0" value="0">
-          </div>
-          <div>
-            <label for="sobre6_hora">Sobre 6 - Hora</label>
-            <input id="sobre6_hora" name="sobre6_hora" type="time">
+            <input id="sobre5_importe" name="sobre5_importe" type="number" step="0.01" min="0" value="" placeholder="0" inputmode="decimal">
           </div>
           <div>
             <label for="sobre6_importe">Sobre 6 - Importe (pesos)</label>
-            <input id="sobre6_importe" name="sobre6_importe" type="number" step="0.01" min="0" value="0">
+            <input id="sobre6_importe" name="sobre6_importe" type="number" step="0.01" min="0" value="" placeholder="0" inputmode="decimal">
           </div>
           <div style="grid-column:1/-1">
             <label for="total_ensobrado">Total ensobrado (pesos)</label>
-            <input id="total_ensobrado" name="total_ensobrado" type="number" step="0.01" min="0" value="0" readonly style="background:#f4f4f5;font-weight:700">
+            <input id="total_ensobrado" name="total_ensobrado" type="number" step="0.01" min="0" value="" placeholder="0" readonly style="background:#f4f4f5;font-weight:700">
           </div>
         </div>
         
@@ -3023,11 +2994,11 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
         <div class="grid">
           <div>
             <label for="puente_entrante">Puente entrante (m³)</label>
-            <input id="puente_entrante" name="puente_entrante" type="number" step="0.001" min="0" value="0" required>
+            <input id="puente_entrante" name="puente_entrante" type="number" step="0.001" min="0" value="" placeholder="0" required inputmode="decimal">
           </div>
           <div>
             <label for="puente_saliente">Puente saliente (m³)</label>
-            <input id="puente_saliente" name="puente_saliente" type="number" step="0.001" min="0" value="0" required>
+            <input id="puente_saliente" name="puente_saliente" type="number" step="0.001" min="0" value="" placeholder="0" required inputmode="decimal">
           </div>
         </div>
         
@@ -3045,21 +3016,29 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
         function cents(v) { return Math.round(parseFloat(v || 0) * 100); }
         function fmt(v) { return (v/100).toFixed(2); }
         function calc() {
-          // Ventas por rubro: el importe se calcula en el servidor con la misma regla
-          function importe(qid, pid) {
-            const q = Math.round(parseFloat(document.getElementById(qid).value || 0));
-            const p = cents(document.getElementById(pid).value);
-            return Math.round(q * p);
+          // Varios
+          var var_ = 0;
+          var vq = document.getElementById('varios_qty');
+          var vp = document.getElementById('varios_price');
+          if (vq && vp) {
+            var_ = Math.round(parseFloat(vq.value || 0) * cents(vp.value));
           }
-          const gnc = importe('gnc_qty', 'gnc_price');
-          const lub = cents(document.getElementById('lubricantes_sales').value);
-          const var_ = importe('varios_qty', 'varios_price');
-          document.getElementById('gnc_sales').value = fmt(gnc);
           document.getElementById('varios_sales').value = fmt(var_);
-          document.getElementById('total_sales').value = fmt(gnc + lub + var_);
+          // Lubricantes
+          var lub = cents(document.getElementById('lubricantes_sales').value);
+          // GNC: se calcula en servidor (suma volúmenes mangueras × precio)
+          // Mostramos estimado en cliente para feedback
+          var gncEst = 0;
+          var priceCents = cents(document.getElementById('gnc_price').value);
+          for (var i = 0; i < 6; i++) {
+            var o = parseFloat(document.getElementById('r'+i+'_apertura').value || 0);
+            var c = parseFloat(document.getElementById('r'+i+'_cierre').value || 0);
+            if (c > o) gncEst += Math.round((c - o) * priceCents);
+          }
+          document.getElementById('total_sales').value = fmt(gncEst + lub + var_);
           // Ensobrado
-          let totalEns = 0;
-          for (let i=1; i<=6; i++) {
+          var totalEns = 0;
+          for (var i=1; i<=6; i++) {
             totalEns += cents(document.getElementById('sobre'+i+'_importe').value);
           }
           document.getElementById('total_ensobrado').value = fmt(totalEns);
@@ -3069,6 +3048,27 @@ operativaRoutes.get('/operativa/rendicion/nuevo', async (c) => {
         });
         // Initial calc
         calc();
+        // Confirmación antes de enviar
+        document.getElementById('form-rendicion').addEventListener('submit', function(e) {
+          if (!confirm('¿Estás seguro de guardar esta rendición? Verificá las lecturas antes de confirmar.')) {
+            e.preventDefault();
+          }
+        });
+        // Set hidden inicio/fin timestamps for server validation (not used for logic anymore)
+        var now = new Date();
+        var todayStr = now.toISOString().split('T')[0];
+        var inicio, fin;
+        var hour = now.getHours();
+        if (hour >= 6 && hour < 14) { inicio = todayStr + 'T06:00'; fin = todayStr + 'T14:00'; }
+        else if (hour >= 14 && hour < 22) { inicio = todayStr + 'T14:00'; fin = todayStr + 'T22:00'; }
+        else { inicio = todayStr + 'T22:00'; fin = addDays(todayStr, 1) + 'T06:00'; }
+        document.getElementById('inicio-hidden').value = inicio;
+        document.getElementById('fin-hidden').value = fin;
+        function addDays(dateStr, days) {
+          var d = new Date(dateStr + 'T00:00:00');
+          d.setDate(d.getDate() + days);
+          return d.toISOString().split('T')[0];
+        }
       })();
     </script>`,
   );
@@ -3080,50 +3080,40 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
   const body = await c.req.parseBody();
   const access = await resolveStore(c, db, body.tienda);
   if ('error' in access) return denied(c, access.error);
-  const fecha = dayStart(str(body.fecha));
+
+  // Fecha: si viene en body (tests), úsala; si no, hoy (producción)
+  const fechaBody = str(body.fecha);
+  const fecha = fechaBody ? dayStart(fechaBody) : utcToday();
   if (!fecha) {
-    return fail(
-      c,
-      'Rendición de turno',
-      'Ingresá una fecha válida (AAAA-MM-DD).',
-      '/operativa/rendicion/nuevo',
-    );
+    return fail(c, 'Rendición de turno', 'Fecha inválida.', '/operativa/rendicion/nuevo');
   }
-  const turno = str(body.turno);
-  if (!isShift(turno)) {
-    return fail(
-      c,
-      'Rendición de turno',
-      'Elegí un turno válido.',
-      '/operativa/rendicion/nuevo',
-    );
+  // Turno: si viene en body (tests), úsalo; si no, según hora actual (producción)
+  const turnoBody = str(body.turno);
+  let turno: Shift;
+  if (isShift(turnoBody)) {
+    turno = turnoBody;
+  } else {
+    const now = new Date();
+    const hour = now.getHours();
+    if (hour >= 6 && hour < 14) turno = 'morning';
+    else if (hour >= 14 && hour < 22) turno = 'evening';
+    else turno = 'night';
   }
-  const inicio = dtFrom(body.inicio);
-  if (!inicio) {
-    return fail(
-      c,
-      'Rendición de turno',
-      'Ingresá la hora de inicio del turno.',
-      '/operativa/rendicion/nuevo',
-    );
+  // Inicio/fin según turno (para guardar en shiftReports)
+  const todayStr = dateInput(fecha);
+  let inicio: Date, fin: Date;
+  if (turno === 'morning') {
+    inicio = new Date(todayStr + 'T06:00:00');
+    fin = new Date(todayStr + 'T14:00:00');
+  } else if (turno === 'evening') {
+    inicio = new Date(todayStr + 'T14:00:00');
+    fin = new Date(todayStr + 'T22:00:00');
+  } else {
+    inicio = new Date(todayStr + 'T22:00:00');
+    const tomorrow = nextDay(fecha);
+    fin = new Date(dateInput(tomorrow) + 'T06:00:00'); // día siguiente 06:00
   }
-  const fin = dtFrom(body.fin);
-  if (!fin) {
-    return fail(
-      c,
-      'Rendición de turno',
-      'Ingresá la hora de fin del turno.',
-      '/operativa/rendicion/nuevo',
-    );
-  }
-  if (fin.getTime() <= inicio.getTime()) {
-    return fail(
-      c,
-      'Rendición de turno',
-      'El fin del turno debe ser posterior al inicio.',
-      '/operativa/rendicion/nuevo',
-    );
-  }
+
   const puenteEntrante = floatFrom(body.puente_entrante);
   if (puenteEntrante === null) {
     return fail(
@@ -3167,16 +3157,13 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
   }
   
   // Ventas por rubro: el importe se calcula SIEMPRE en el servidor
-  // Precio único por turno (GNC): priorizá el producto GNC de la tienda;
-  // si no existe, se usa lo que venga en body.gnc_price.
+  // GNC: cantidad = suma (cierre - apertura) de las 6 mangueras
   const gncProduct = await findGncProduct(db);
-  const gncQty = qtyFrom(body.gnc_qty);
   const priceCents = gncProduct ? gncProduct.priceCents : centsOr0(body.gnc_price);
   const lubricantesSalesCents = centsOr0(body.lubricantes_sales);
   const variosQty = qtyFrom(body.varios_qty);
   const variosPriceCents = centsOr0(body.varios_price);
   if (
-    gncQty === null ||
     priceCents === null ||
     lubricantesSalesCents === null ||
     variosQty === null ||
@@ -3189,21 +3176,18 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
       '/operativa/rendicion/nuevo',
     );
   }
+  // Calcular GNC volume desde lecturas
+  const gncQty = readings.reduce((sum, r) => sum + (r.closing - r.opening), 0);
   const gncSalesCents = Math.round(gncQty * priceCents);
   const variosSalesCents = Math.round(variosQty * variosPriceCents);
   const totalSalesCents = gncSalesCents + lubricantesSalesCents + variosSalesCents;
   
-  const sobre1Hora = str(body.sobre1_hora) || null;
+  // Sobres: solo importe (sin hora)
   const sobre1ImporteCents = centsFrom(body.sobre1_importe) ?? 0;
-  const sobre2Hora = str(body.sobre2_hora) || null;
   const sobre2ImporteCents = centsFrom(body.sobre2_importe) ?? 0;
-  const sobre3Hora = str(body.sobre3_hora) || null;
   const sobre3ImporteCents = centsFrom(body.sobre3_importe) ?? 0;
-  const sobre4Hora = str(body.sobre4_hora) || null;
   const sobre4ImporteCents = centsFrom(body.sobre4_importe) ?? 0;
-  const sobre5Hora = str(body.sobre5_hora) || null;
   const sobre5ImporteCents = centsFrom(body.sobre5_importe) ?? 0;
-  const sobre6Hora = str(body.sobre6_hora) || null;
   const sobre6ImporteCents = centsFrom(body.sobre6_importe) ?? 0;
   const totalEnsobradoCents = sobre1ImporteCents + sobre2ImporteCents + sobre3ImporteCents + sobre4ImporteCents + sobre5ImporteCents + sobre6ImporteCents;
   
@@ -3225,17 +3209,17 @@ operativaRoutes.post('/operativa/rendicion', async (c) => {
       variosQty,
       variosSalesCents,
       totalSalesCents,
-      sobre1Hora,
+      sobre1Hora: null,
       sobre1ImporteCents,
-      sobre2Hora,
+      sobre2Hora: null,
       sobre2ImporteCents,
-      sobre3Hora,
+      sobre3Hora: null,
       sobre3ImporteCents,
-      sobre4Hora,
+      sobre4Hora: null,
       sobre4ImporteCents,
-      sobre5Hora,
+      sobre5Hora: null,
       sobre5ImporteCents,
-      sobre6Hora,
+      sobre6Hora: null,
       sobre6ImporteCents,
       totalEnsobradoCents,
       puenteEntrante,
@@ -3444,10 +3428,382 @@ operativaRoutes.get('/operativa/rendicion/:id', async (c) => {
       <h2 style="margin-top:1.25rem">Observaciones</h2>
       <p>${report.observaciones ? escapeHtml(report.observaciones) : report.notes ? escapeHtml(report.notes) : '<span class="muted">Sin observaciones.</span>'}</p>
 
-      <p style="margin-top:1rem"><a href="/operativa/rendicion">Volver al listado</a></p>
+      <p style="margin-top:1rem">
+        <a href="/operativa/rendicion">Volver al listado</a>
+        ${(user.role === 'admin' || user.role === 'store_manager' || user.id === report.cashierId)
+          ? ` <a class="btn secondary" href="/operativa/rendicion/${report.id}/editar" style="${SMALL_BTN}">Editar</a>`
+          : ''}
+      </p>
     </div>`,
     { notice: aviso(c, 'Rendición guardada.') },
   );
+});
+
+// GET /operativa/rendicion/:id/editar - Formulario de edición
+operativaRoutes.get('/operativa/rendicion/:id/editar', requireRole('admin', 'store_manager'), async (c) => {
+  const db = dbOf(c);
+  const user = c.get('user')!;
+  const id = idFrom(c.req.param('id'));
+  if (!id) return notFound(c, 'Rendición de turno', '/operativa/rendicion');
+  const rows = await db
+    .select()
+    .from(shiftReports)
+    .where(eq(shiftReports.id, id))
+    .limit(1);
+  const report = rows[0];
+  if (!report) return notFound(c, 'Rendición de turno', '/operativa/rendicion');
+  if (!(await canManageStore(db, user, report.storeId))) {
+    return denied(c, 'No tenés permiso sobre la tienda de esa rendición.');
+  }
+  const readings = await db
+    .select()
+    .from(shiftReportReadings)
+    .where(eq(shiftReportReadings.reportId, report.id))
+    .orderBy(asc(shiftReportReadings.manguera));
+  const gncProduct = await findGncProduct(db);
+  const gncPriceInfo = gncProduct
+    ? `<p class="muted" style="margin:0 0 0.35rem">Precio GNC (desde Tienda): <strong>${formatArs(gncProduct.priceCents)}</strong> /m³</p>
+            <input id="gnc_price" name="gnc_price" type="hidden" value="${(gncProduct.priceCents / 100).toFixed(2)}">`
+    : `<input id="gnc_price" name="gnc_price" type="hidden" value="0">`;
+
+  // Pre-llenar lecturas en array por manguera
+  const readingMap = new Map<number, { opening: number; closing: number }>();
+  readings.forEach(r => readingMap.set(r.manguera, { opening: r.openingReading, closing: r.closingReading }));
+
+  let readingsHtml = '';
+  for (let i = 0; i < 6; i++) {
+    const manguera = i + 1;
+    const r = readingMap.get(manguera);
+    readingsHtml += `<div class="row" style="border-top:1px solid #e4e4e7;padding-top:0.5rem;margin-top:0.5rem">
+      <div style="flex:1;min-width:5rem">
+        <label for="r${i}_apertura">Manguera ${manguera} - Lectura inicial (m³)</label>
+        <input id="r${i}_apertura" name="r${i}_apertura" type="number" step="0.001" min="0" value="${r ? r.opening : ''}" placeholder="0" inputmode="decimal">
+      </div>
+      <div style="flex:1;min-width:5rem">
+        <label for="r${i}_cierre">Manguera ${manguera} - Lectura final (m³)</label>
+        <input id="r${i}_cierre" name="r${i}_cierre" type="number" step="0.001" min="0" value="${r ? r.closing : ''}" placeholder="0" inputmode="decimal">
+      </div>
+      <div style="flex:1;min-width:7rem">
+        <label for="r${i}_precio">Manguera ${manguera} - Precio por metro cúbico (pesos)</label>
+        <input id="r${i}_precio" name="r${i}_precio" type="number" step="0.01" min="0" value="${(report.priceCents / 100).toFixed(2)}" readonly style="background:#f4f4f5">
+      </div>
+    </div>`;
+  }
+
+  const turnLabel = SHIFT_LABELS[report.shift];
+  const fechaStr = dateInput(report.reportDate);
+
+  return render(
+    c,
+    'Editar rendición de turno',
+    `<div class="card">
+      <h1>Editar rendición de turno</h1>
+      <form method="post" action="/operativa/rendicion/${report.id}/editar" id="form-rendicion-edit">
+        <input type="hidden" name="fecha" value="${fechaStr}">
+        <input type="hidden" name="turno" value="${report.shift}">
+        <h2>Datos del turno</h2>
+        <div class="grid">
+          <div>
+            <label>Fecha</label>
+            <input type="text" value="${fechaStr}" readonly style="background:#f4f4f5;color:#666">
+          </div>
+          <div>
+            <label>Turno</label>
+            <input type="text" value="${turnLabel}" readonly style="background:#f4f4f5;color:#666">
+          </div>
+          <div>
+            <label for="operador">Operador</label>
+            <input id="operador" name="operador" type="text" required value="${escapeHtml(user.name)}" readonly>
+          </div>
+        </div>
+        
+        <h2 style="margin-top:1.25rem">Lecturas de mangueras (GNC)</h2>
+        <p class="muted">Modificá las lecturas. La venta de GNC se recalcula automáticamente (final - inicial) × precio.</p>
+        ${readingsHtml}
+        
+        <h2 style="margin-top:1.25rem">Ventas del turno</h2>
+        ${gncPriceInfo}
+        <div class="grid">
+          <div>
+            <label for="lubricantes_sales">Lubricantes - Importe total (pesos)</label>
+            <input id="lubricantes_sales" name="lubricantes_sales" type="number" step="0.01" min="0" value="${(report.lubricantesSalesCents / 100).toFixed(2)}" placeholder="0" inputmode="decimal">
+          </div>
+          <div>
+            <label for="varios_qty">Varios - Cantidad</label>
+            <input id="varios_qty" name="varios_qty" type="number" step="1" min="0" value="${report.variosQty}" placeholder="0" inputmode="decimal">
+          </div>
+          <div>
+            <label for="varios_price">Varios - Precio unitario (pesos)</label>
+            <input id="varios_price" name="varios_price" type="number" step="0.01" min="0" value="${(report.variosPriceCents / 100).toFixed(2)}" placeholder="0" inputmode="decimal">
+          </div>
+          <div>
+            <label for="varios_sales">Varios - Importe (pesos)</label>
+            <input id="varios_sales" name="varios_sales" type="number" step="0.01" min="0" value="${(report.variosSalesCents / 100).toFixed(2)}" placeholder="0" readonly style="background:#f4f4f5">
+          </div>
+          <div style="grid-column:1/-1">
+            <label for="total_sales">Total ventas del turno (pesos)</label>
+            <input id="total_sales" name="total_sales" type="number" step="0.01" min="0" value="${(report.totalSalesCents / 100).toFixed(2)}" placeholder="0" readonly style="background:#f4f4f5;font-weight:700;font-size:1.1rem">
+          </div>
+        </div>
+        
+        <h2 style="margin-top:1.25rem">Recaudación ensobrada</h2>
+        <p class="muted">Registrá el importe de cada sobre (máx. 6).</p>
+        <div class="grid">
+          <div>
+            <label for="sobre1_importe">Sobre 1 - Importe (pesos)</label>
+            <input id="sobre1_importe" name="sobre1_importe" type="number" step="0.01" min="0" value="${(report.sobre1ImporteCents / 100).toFixed(2)}" placeholder="0" inputmode="decimal">
+          </div>
+          <div>
+            <label for="sobre2_importe">Sobre 2 - Importe (pesos)</label>
+            <input id="sobre2_importe" name="sobre2_importe" type="number" step="0.01" min="0" value="${(report.sobre2ImporteCents / 100).toFixed(2)}" placeholder="0" inputmode="decimal">
+          </div>
+          <div>
+            <label for="sobre3_importe">Sobre 3 - Importe (pesos)</label>
+            <input id="sobre3_importe" name="sobre3_importe" type="number" step="0.01" min="0" value="${(report.sobre3ImporteCents / 100).toFixed(2)}" placeholder="0" inputmode="decimal">
+          </div>
+          <div>
+            <label for="sobre4_importe">Sobre 4 - Importe (pesos)</label>
+            <input id="sobre4_importe" name="sobre4_importe" type="number" step="0.01" min="0" value="${(report.sobre4ImporteCents / 100).toFixed(2)}" placeholder="0" inputmode="decimal">
+          </div>
+          <div>
+            <label for="sobre5_importe">Sobre 5 - Importe (pesos)</label>
+            <input id="sobre5_importe" name="sobre5_importe" type="number" step="0.01" min="0" value="${(report.sobre5ImporteCents / 100).toFixed(2)}" placeholder="0" inputmode="decimal">
+          </div>
+          <div>
+            <label for="sobre6_importe">Sobre 6 - Importe (pesos)</label>
+            <input id="sobre6_importe" name="sobre6_importe" type="number" step="0.01" min="0" value="${(report.sobre6ImporteCents / 100).toFixed(2)}" placeholder="0" inputmode="decimal">
+          </div>
+          <div style="grid-column:1/-1">
+            <label for="total_ensobrado">Total ensobrado (pesos)</label>
+            <input id="total_ensobrado" name="total_ensobrado" type="number" step="0.01" min="0" value="${(report.totalEnsobradoCents / 100).toFixed(2)}" placeholder="0" readonly style="background:#f4f4f5;font-weight:700">
+          </div>
+        </div>
+        
+        <h2 style="margin-top:1.25rem">Puente de medición</h2>
+        <p class="muted">Ingresá las lecturas del puente al inicio y al fin del turno (m³).</p>
+        <div class="grid">
+          <div>
+            <label for="puente_entrante">Puente entrante (m³)</label>
+            <input id="puente_entrante" name="puente_entrante" type="number" step="0.001" min="0" value="${report.puenteEntrante.toFixed(3)}" placeholder="0" required inputmode="decimal">
+          </div>
+          <div>
+            <label for="puente_saliente">Puente saliente (m³)</label>
+            <input id="puente_saliente" name="puente_saliente" type="number" step="0.001" min="0" value="${report.puenteSaliente.toFixed(3)}" placeholder="0" required inputmode="decimal">
+          </div>
+        </div>
+        
+        <p class="muted" style="margin-top:0.75rem">Nota: No podrán tener más de $20.000 por billetera en caso de robo. La diferencia mayor será abonada por ustedes.</p>
+        
+        <label for="notas">Observaciones (opcional)</label>
+        <textarea id="notas" name="notas" rows="3" placeholder="Observaciones del turno...">${report.observaciones ? escapeHtml(report.observaciones) : ''}</textarea>
+        
+        <button type="submit">Guardá los cambios</button>
+      </form>
+      <p><a href="/operativa/rendicion/${report.id}">Volver al detalle</a></p>
+    </div>
+    <script>
+      (function() {
+        function cents(v) { return Math.round(parseFloat(v || 0) * 100); }
+        function fmt(v) { return (v/100).toFixed(2); }
+        function calc() {
+          var var_ = 0;
+          var vq = document.getElementById('varios_qty');
+          var vp = document.getElementById('varios_price');
+          if (vq && vp) {
+            var_ = Math.round(parseFloat(vq.value || 0) * cents(vp.value));
+          }
+          document.getElementById('varios_sales').value = fmt(var_);
+          var lub = cents(document.getElementById('lubricantes_sales').value);
+          var gncEst = 0;
+          var priceCents = cents(document.getElementById('gnc_price').value);
+          for (var i = 0; i < 6; i++) {
+            var o = parseFloat(document.getElementById('r'+i+'_apertura').value || 0);
+            var c = parseFloat(document.getElementById('r'+i+'_cierre').value || 0);
+            if (c > o) gncEst += Math.round((c - o) * priceCents);
+          }
+          document.getElementById('total_sales').value = fmt(gncEst + lub + var_);
+          var totalEns = 0;
+          for (var i=1; i<=6; i++) {
+            totalEns += cents(document.getElementById('sobre'+i+'_importe').value);
+          }
+          document.getElementById('total_ensobrado').value = fmt(totalEns);
+        }
+        document.querySelectorAll('input[type="number"]').forEach(function(el) {
+          el.addEventListener('input', calc);
+        });
+        calc();
+        document.getElementById('form-rendicion-edit').addEventListener('submit', function(e) {
+          if (!confirm('¿Estás seguro de guardar los cambios? Se recalcularán los totales y el resumen diario.')) {
+            e.preventDefault();
+          }
+        });
+      })();
+    </script>`,
+  );
+});
+
+// POST /operativa/rendicion/:id/editar - Actualizar rendición
+operativaRoutes.post('/operativa/rendicion/:id/editar', requireRole('admin', 'store_manager'), async (c) => {
+  const db = dbOf(c);
+  const user = c.get('user')!;
+  const id = idFrom(c.req.param('id'));
+  if (!id) return notFound(c, 'Rendición de turno', '/operativa/rendicion');
+  const body = await c.req.parseBody();
+  
+  const rows = await db
+    .select()
+    .from(shiftReports)
+    .where(eq(shiftReports.id, id))
+    .limit(1);
+  const report = rows[0];
+  if (!report) return notFound(c, 'Rendición de turno', '/operativa/rendicion');
+  if (!(await canManageStore(db, user, report.storeId))) {
+    return denied(c, 'No tenés permiso sobre la tienda de esa rendición.');
+  }
+
+  const fecha = report.reportDate;
+  const turno = report.shift;
+  // Recalcular inicio/fin según turno (igual que en POST nuevo)
+  const todayStr = dateInput(fecha);
+  let inicio: Date, fin: Date;
+  if (turno === 'morning') {
+    inicio = new Date(todayStr + 'T06:00:00');
+    fin = new Date(todayStr + 'T14:00:00');
+  } else if (turno === 'evening') {
+    inicio = new Date(todayStr + 'T14:00:00');
+    fin = new Date(todayStr + 'T22:00:00');
+  } else {
+    inicio = new Date(todayStr + 'T22:00:00');
+    const tomorrow = nextDay(fecha);
+    fin = new Date(dateInput(tomorrow) + 'T06:00:00');
+  }
+
+  const puenteEntrante = floatFrom(body.puente_entrante);
+  if (puenteEntrante === null) {
+    return fail(c, 'Rendición de turno', 'El puente entrante no es un valor válido.', `/operativa/rendicion/${id}/editar`);
+  }
+  const puenteSaliente = floatFrom(body.puente_saliente);
+  if (puenteSaliente === null) {
+    return fail(c, 'Rendición de turno', 'El puente saliente no es un valor válido.', `/operativa/rendicion/${id}/editar`);
+  }
+
+  const readings = parseReadings(body);
+  if (typeof readings === 'string') {
+    return fail(c, 'Rendición de turno', readings, `/operativa/rendicion/${id}/editar`);
+  }
+
+  const gncProduct = await findGncProduct(db);
+  const priceCents = gncProduct ? gncProduct.priceCents : centsOr0(body.gnc_price);
+  const lubricantesSalesCents = centsOr0(body.lubricantes_sales);
+  const variosQty = qtyFrom(body.varios_qty);
+  const variosPriceCents = centsOr0(body.varios_price);
+  if (
+    priceCents === null ||
+    lubricantesSalesCents === null ||
+    variosQty === null ||
+    variosPriceCents === null
+  ) {
+    return fail(c, 'Rendición de turno', 'Las cantidades o precios de los rubros no son válidos.', `/operativa/rendicion/${id}/editar`);
+  }
+  const gncQty = readings.reduce((sum, r) => sum + (r.closing - r.opening), 0);
+  const gncSalesCents = Math.round(gncQty * priceCents);
+  const variosSalesCents = Math.round(variosQty * variosPriceCents);
+  const totalSalesCents = gncSalesCents + lubricantesSalesCents + variosSalesCents;
+
+  const sobre1ImporteCents = centsFrom(body.sobre1_importe) ?? 0;
+  const sobre2ImporteCents = centsFrom(body.sobre2_importe) ?? 0;
+  const sobre3ImporteCents = centsFrom(body.sobre3_importe) ?? 0;
+  const sobre4ImporteCents = centsFrom(body.sobre4_importe) ?? 0;
+  const sobre5ImporteCents = centsFrom(body.sobre5_importe) ?? 0;
+  const sobre6ImporteCents = centsFrom(body.sobre6_importe) ?? 0;
+  const totalEnsobradoCents = sobre1ImporteCents + sobre2ImporteCents + sobre3ImporteCents + sobre4ImporteCents + sobre5ImporteCents + sobre6ImporteCents;
+
+  const observaciones = str(body.notas) || null;
+
+  // Actualizar shiftReports
+  await db
+    .update(shiftReports)
+    .set({
+      shiftStart: inicio,
+      shiftEnd: fin,
+      gncQty,
+      priceCents,
+      gncSalesCents,
+      lubricantesSalesCents,
+      variosQty,
+      variosSalesCents,
+      totalSalesCents,
+      sobre1Hora: null,
+      sobre1ImporteCents,
+      sobre2Hora: null,
+      sobre2ImporteCents,
+      sobre3Hora: null,
+      sobre3ImporteCents,
+      sobre4Hora: null,
+      sobre4ImporteCents,
+      sobre5Hora: null,
+      sobre5ImporteCents,
+      sobre6Hora: null,
+      sobre6ImporteCents,
+      totalEnsobradoCents,
+      puenteEntrante,
+      puenteSaliente,
+      observaciones,
+      updatedAt: new Date(),
+    })
+    .where(eq(shiftReports.id, id));
+
+  // Actualizar shiftReportReadings (borrar y reinsertar)
+  await db.delete(shiftReportReadings).where(eq(shiftReportReadings.reportId, id));
+  await db.insert(shiftReportReadings).values(
+    readings.map((r) => ({
+      reportId: id,
+      manguera: r.manguera,
+      product: r.product,
+      openingReading: r.opening,
+      closingReading: r.closing,
+      volume: r.closing - r.opening,
+      totalCents: Math.round((r.closing - r.opening) * 0),
+    })),
+  );
+
+  // Actualizar dailyActivities (upsert)
+  const gncOpening = readings.reduce((a, r) => a + r.opening, 0);
+  const gncClosing = readings.reduce((a, r) => a + r.closing, 0);
+  await db
+    .insert(dailyActivities)
+    .values({
+      storeId: report.storeId,
+      reportDate: fecha,
+      shift: turno,
+      gncOpening,
+      gncClosing,
+      gncVolume: gncQty,
+      gncSalesCents,
+    })
+    .onConflictDoUpdate({
+      target: [
+        dailyActivities.storeId,
+        dailyActivities.reportDate,
+        dailyActivities.shift,
+      ],
+      set: {
+        gncOpening,
+        gncClosing,
+        gncVolume: gncQty,
+        gncSalesCents,
+      },
+    });
+
+  // Auditoría: agregar nota de edición
+  const editNote = `Editado por ${user.name} (${user.role}) el ${new Date().toLocaleString('es-AR')}: lecturas/puente/ventas actualizados.`;
+  const existingNotes = report.notes || '';
+  await db
+    .update(shiftReports)
+    .set({ notes: existingNotes ? existingNotes + ' | ' + editNote : editNote })
+    .where(eq(shiftReports.id, id));
+
+  return c.redirect(`/operativa/rendicion/${id}?aviso=1`);
 });
 
 // Generate PDF for Rendición de turno

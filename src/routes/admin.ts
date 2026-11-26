@@ -819,6 +819,10 @@ adminRoutes.post('/admin/tienda/gestores/quitar', async (c) => {
 
 // ---------------------------------------------------------------- productos
 
+function isGncProduct(p: { name: string; category: string } | undefined): p is { name: string; category: string } & { priceCents: number; stock: number | null; description: string } {
+  return p?.name === 'G.N.C' && p?.category === 'G.N.C';
+}
+
 function productoFormFields(p?: {
   name: string;
   category: string;
@@ -828,6 +832,17 @@ function productoFormFields(p?: {
 }): string {
   const precio =
     p === undefined ? '' : (p.priceCents / 100).toFixed(2).replace('.', ',');
+  // Producto GNC blindado: solo precio editable
+  if (p && p.name === 'G.N.C' && p.category === 'G.N.C') {
+    return `
+    <p class="muted" style="margin-bottom:0.5rem"><strong>Producto GNC principal</strong> — Solo el precio se puede modificar.</p>
+    <input type="hidden" name="name" value="${escapeHtml(p.name)}">
+    <input type="hidden" name="category" value="${escapeHtml(p.category)}">
+    <input type="hidden" name="stock" value="${p.stock ?? ''}">
+    <input type="hidden" name="description" value="${escapeHtml(p.description ?? '')}">
+    <label for="p-price">Precio GNC (ARS / m³)</label>
+    <input id="p-price" name="price" type="text" required inputmode="decimal" value="${precio}" placeholder="Ej: 699,00" style="font-weight:700;font-size:1.1rem">`;
+  }
   return `
     <label for="p-name">Nombre</label>
     <input id="p-name" name="name" type="text" required minlength="2" value="${escapeHtml(p?.name ?? '')}">
@@ -993,9 +1008,50 @@ adminRoutes.post('/admin/tienda/productos/:id/editar', requireMFA(), async (c) =
   if (!rows[0]) {
     return render(c, 'Tienda', notFoundBody('/admin/tienda'), { status: 404 });
   }
-  const oldPriceCents = rows[0].priceCents;
-  const oldName = rows[0].name;
+  const product = rows[0];
+  const isGnc = isGncProduct({ name: product.name, category: product.category });
+  const oldPriceCents = product.priceCents;
+  const oldName = product.name;
   const body = await c.req.parseBody();
+  
+  if (isGnc) {
+    // Solo actualizar precio para producto GNC
+    const priceCents = parsePriceCents(body.price);
+    if (priceCents === null) {
+      return render(
+        c,
+        'Editar producto',
+        `<div class="card"><h1>No se guardó</h1>
+         <p class="muted">Ingresá un precio válido (ej: 699 o 699,00).</p>${volver}</div>`,
+        { error: 'Ingresá un precio válido.' },
+      );
+    }
+    await db
+      .update(products)
+      .set({ priceCents, updatedAt: new Date() })
+      .where(eq(products.id, id));
+
+    // Notificar a playeros si cambió el precio
+    if (priceCents !== oldPriceCents) {
+      const playeros = await db
+        .select({ userId: users.id })
+        .from(users)
+        .where(eq(users.role, 'store_manager'));
+      if (playeros.length > 0) {
+        const notifValues = playeros.map((p) => ({
+          userId: p.userId,
+          type: 'price_change',
+          title: 'Cambio de precio GNC',
+          body: 'El precio del GNC cambió de ' + formatArs(oldPriceCents) + ' a ' + formatArs(priceCents) + ' /m³.',
+          data: JSON.stringify({ productId: id, oldPriceCents, newPriceCents: priceCents }),
+        }));
+        await db.insert(notifications).values(notifValues);
+      }
+    }
+    return c.redirect(avisado('/admin/tienda'));
+  }
+
+  // Producto normal: validar y actualizar todo
   const name = str(body.name);
   const category = str(body.category) || 'general';
   const priceCents = parsePriceCents(body.price);
@@ -1092,6 +1148,20 @@ adminRoutes.post('/admin/tienda/productos/:id/activo', requireMFA(), async (c) =
   if (!id) {
     return render(c, 'Tienda', notFoundBody('/admin/tienda'), { status: 404 });
   }
+  const db = dbOf(c);
+  const rows = await db
+    .select()
+    .from(products)
+    .where(eq(products.id, id))
+    .limit(1);
+  if (!rows[0]) {
+    return render(c, 'Tienda', notFoundBody('/admin/tienda'), { status: 404 });
+  }
+  if (isGncProduct({ name: rows[0].name, category: rows[0].category })) {
+    return render(c, 'Tienda', notFoundBody('/admin/tienda'), {
+      error: 'El producto GNC principal no se puede activar/desactivar.',
+    });
+  }
   const body = await c.req.parseBody();
   const active = parseActivo(body.active);
   if (active === null) {
@@ -1099,7 +1169,6 @@ adminRoutes.post('/admin/tienda/productos/:id/activo', requireMFA(), async (c) =
       error: "Enviá active = '1' para activar o '0' para desactivar.",
     });
   }
-  const db = dbOf(c);
   const updated = await db
     .update(products)
     .set({ active, updatedAt: new Date() })

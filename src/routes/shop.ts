@@ -129,12 +129,16 @@ shopRoutes.get('/tienda', async (c) => {
 
   const cards = rows
     .map((p) => {
-      const sinStock = p.stock !== null && p.stock <= 0;
-      const stockHtml = sinStock
-        ? `<span class="pill" style="background:#ffffff;color:#18181b;border:1px solid #18181b">Sin stock</span>`
-        : p.stock === null
-          ? `<span class="pill">Disponible</span>`
-          : `<span class="pill">Disponible</span> <span class="muted">${p.stock} en stock</span>`;
+      // GNC principal: stock ilimitado (stock=0 o null = sin límite)
+      const isGnc = p.name === 'G.N.C' && p.category === 'G.N.C';
+      const sinStock = !isGnc && p.stock !== null && p.stock <= 0;
+      const stockHtml = isGnc
+        ? `<span class="pill" style="background:#e8f5e9;color:#2e7d32;border:1px solid #2e7d32">Ilimitado</span>`
+        : sinStock
+          ? `<span class="pill" style="background:#ffffff;color:#18181b;border:1px solid #18181b">Sin stock</span>`
+          : p.stock === null
+            ? `<span class="pill">Disponible</span>`
+            : `<span class="pill">Disponible</span> <span class="muted">${p.stock} en stock</span>`;
       const form = sinStock
         ? ''
         : `<form method="post" action="/carrito/agregar" class="row">

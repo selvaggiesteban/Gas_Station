@@ -2019,8 +2019,10 @@ operativaRoutes.get('/operativa/resumen-diario', requireRole('admin'), async (c)
       totalRecaudacion: 0,
     },
   );
-  // % Total = SUMA de porcentajes por turno (no promedio ponderado)
-  const totalsPorcentaje = summaryRows.reduce((sum, r) => sum + r.gncPorcentaje, 0);
+  // % Total = PROMEDIO PONDERADO por volúmenes (mermas totales / ingreso total × 100)
+  const totalsPorcentaje = totals.gncIngreso > 0
+    ? (totals.gncMermasExcedencias / totals.gncIngreso) * 100
+    : 0;
   const totalsPrecioUnitario =
     totals.gncImporteTotal > 0 && totals.gncVentasM3 > 0
       ? Math.round(totals.gncImporteTotal / totals.gncVentasM3)

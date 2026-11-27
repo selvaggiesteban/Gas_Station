@@ -681,6 +681,9 @@ adminRoutes.get('/admin/tienda', async (c) => {
           <input type="hidden" name="active" value="${p.active ? '0' : '1'}">
           <button type="submit" class="secondary" style="${SMALL_BTN}">${p.active ? 'Desactivá' : 'Activá'}</button>
         </form>
+        <form method="post" action="/admin/tienda/productos/${p.id}/eliminar" style="display:inline" onsubmit="return confirm('¿Eliminar producto \"${escapeHtml(p.name)}\"? Esta acción no se puede deshacer.')">
+          <button type="submit" class="danger" style="${SMALL_BTN}">Eliminar</button>
+        </form>
       </td>
     </tr>`,
     )
@@ -1177,6 +1180,30 @@ adminRoutes.post('/admin/tienda/productos/:id/activo', requireMFA(), async (c) =
   if (!updated[0]) {
     return render(c, 'Tienda', notFoundBody('/admin/tienda'), { status: 404 });
   }
+  return c.redirect(avisado('/admin/tienda'));
+});
+
+// Eliminar producto (borrado físico, con MFA)
+adminRoutes.post('/admin/tienda/productos/:id/eliminar', requireMFA(), async (c) => {
+  const id = parseIdParam(c.req.param('id'));
+  if (!id) {
+    return render(c, 'Tienda', notFoundBody('/admin/tienda'), { status: 404 });
+  }
+  const db = dbOf(c);
+  const rows = await db
+    .select()
+    .from(products)
+    .where(eq(products.id, id))
+    .limit(1);
+  if (!rows[0]) {
+    return render(c, 'Tienda', notFoundBody('/admin/tienda'), { status: 404 });
+  }
+  if (isGncProduct({ name: rows[0].name, category: rows[0].category })) {
+    return render(c, 'Tienda', notFoundBody('/admin/tienda'), {
+      error: 'El producto GNC principal no se puede eliminar.',
+    });
+  }
+  await db.delete(products).where(eq(products.id, id));
   return c.redirect(avisado('/admin/tienda'));
 });
 

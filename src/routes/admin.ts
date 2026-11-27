@@ -669,7 +669,9 @@ adminRoutes.get('/admin/tienda', async (c) => {
 
   const filasProductos = productos
     .map(
-      (p) => `<tr>
+      (p) => {
+        const isGnc = isGncProduct({ name: p.name, category: p.category });
+        return `<tr>
       <td style="${TD}">${escapeHtml(p.name)}</td>
       <td style="${TD}">${escapeHtml(p.category)}</td>
       <td style="${TD}">${formatArs(p.priceCents)}</td>
@@ -677,6 +679,7 @@ adminRoutes.get('/admin/tienda', async (c) => {
       <td style="${TD}">${p.active ? 'Sí' : 'No'}</td>
       <td style="${TD}">
         <a class="btn secondary" href="/admin/tienda/productos/${p.id}/editar" style="${SMALL_BTN}">Editar</a>
+        ${!isGnc ? `
         <form method="post" action="/admin/tienda/productos/${p.id}/activo" style="display:inline">
           <input type="hidden" name="active" value="${p.active ? '0' : '1'}">
           <button type="submit" class="secondary" style="${SMALL_BTN}">${p.active ? 'Desactivá' : 'Activá'}</button>
@@ -684,8 +687,10 @@ adminRoutes.get('/admin/tienda', async (c) => {
         <form method="post" action="/admin/tienda/productos/${p.id}/eliminar" style="display:inline" onsubmit="return confirm('¿Eliminar producto \"${escapeHtml(p.name)}\"? Esta acción no se puede deshacer.')">
           <button type="submit" class="danger" style="${SMALL_BTN}">Eliminar</button>
         </form>
+        ` : `<span class="muted" style="font-size:0.8rem">Protegido</span>`}
       </td>
-    </tr>`,
+    </tr>`;
+      },
     )
     .join('');
 
